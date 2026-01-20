@@ -38,23 +38,60 @@ public class User
 }
 
 // Repository - data access only
+/// <summary>
+/// Repository for user data access operations.
+/// </summary>
 public interface IUserRepository
 {
+    /// <summary>
+    /// Gets a user by their unique identifier.
+    /// </summary>
+    /// <param name="id">The user's unique identifier.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+    /// <returns>The user if found; otherwise, null.</returns>
     Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Gets a user by their email address.
+    /// </summary>
+    /// <param name="email">The user's email address.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+    /// <returns>The user if found; otherwise, null.</returns>
     Task<User?> GetByEmailAsync(string email, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Saves a user to the database.
+    /// </summary>
+    /// <param name="user">The user to save.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
     Task SaveAsync(User user, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Deletes a user from the database.
+    /// </summary>
+    /// <param name="id">The unique identifier of the user to delete.</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
     Task DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Entity Framework Core implementation of the user repository.
+/// </summary>
 public class UserRepository : IUserRepository
 {
     private readonly AppDbContext _context;
     
+    /// <summary>
+    /// Initializes a new instance of the <see cref="UserRepository"/> class.
+    /// </summary>
+    /// <param name="context">The database context.</param>
+    /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
     public UserRepository(AppDbContext context)
     {
-        _context = context;
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
     
+    /// <inheritdoc />
     public async Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         return await _context.Users.FindAsync(new object[] { id }, cancellationToken);
@@ -1383,6 +1420,11 @@ public class OrderService
 - [ ] LINQ used appropriately (avoid N+1 queries)
 - [ ] Expression-bodied members used where appropriate
 - [ ] Pattern matching used where beneficial
+- [ ] XML documentation comments for public APIs (`/// <summary>`)
+- [ ] File-scoped namespaces used (C# 10+)
+- [ ] Primary constructors used where appropriate (C# 12+)
+- [ ] Record types used for immutable DTOs and value objects
+- [ ] Init-only properties for immutable data structures
 
 ### Code Style
 - [ ] Code follows Microsoft C# coding conventions
@@ -1507,6 +1549,271 @@ root = true
 max_line_length = 120
 indent_size = 4
 indent_style = space
+# File-scoped namespaces (C# 10+)
+csharp_style_namespace_declarations = file_scoped:warning
+# Prefer 'var' when type is obvious
+csharp_style_var_for_built_in_types = false:warning
+csharp_style_var_when_type_is_apparent = true:warning
+csharp_style_var_elsewhere = false:warning
+# Expression-bodied members
+csharp_style_expression_bodied_methods = when_on_single_line:warning
+csharp_style_expression_bodied_properties = true:warning
+# Pattern matching
+csharp_style_pattern_matching_over_is_with_cast_check = true:warning
+csharp_style_prefer_switch_expression = true:warning
+```
+
+## Modern C# Features (2025)
+
+### File-Scoped Namespaces (C# 10+)
+
+**Microsoft Recommendation:** Use file-scoped namespaces to reduce indentation
+
+**Before:**
+```csharp
+namespace MyApp.Services
+{
+    public class UserService
+    {
+        // ...
+    }
+}
+```
+
+**After (File-Scoped):**
+```csharp
+namespace MyApp.Services;
+
+public class UserService
+{
+    // ...
+}
+```
+
+### Primary Constructors (C# 12+)
+
+**Microsoft Recommendation:** Use primary constructors for simple initialization
+
+**Before:**
+```csharp
+public class UserService
+{
+    private readonly IUserRepository _userRepository;
+    private readonly ILogger<UserService> _logger;
+    
+    public UserService(IUserRepository userRepository, ILogger<UserService> logger)
+    {
+        _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+}
+```
+
+**After (Primary Constructor):**
+```csharp
+public class UserService(
+    IUserRepository userRepository,
+    ILogger<UserService> logger)
+{
+    public async Task<User?> GetUserAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await userRepository.GetByIdAsync(id, cancellationToken);
+    }
+}
+```
+
+### Record Types for DTOs
+
+**Microsoft Recommendation:** Use records for immutable data transfer objects
+
+**Before:**
+```csharp
+public class CreateUserDto
+{
+    public string Email { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+}
+```
+
+**After (Record):**
+```csharp
+/// <summary>
+/// Data transfer object for creating a new user.
+/// </summary>
+/// <param name="Email">The user's email address.</param>
+/// <param name="Name">The user's full name.</param>
+public record CreateUserDto(
+    string Email,
+    string Name);
+
+// Or with init-only properties for optional fields
+public record UpdateUserDto
+{
+    public string? Email { get; init; }
+    public string? Name { get; init; }
+}
+```
+
+### Pattern Matching Enhancements
+
+**Microsoft Recommendation:** Use pattern matching for cleaner conditional logic
+
+**Before:**
+```csharp
+if (user != null && user.IsActive && user.EmailConfirmed)
+{
+    // ...
+}
+```
+
+**After (Pattern Matching):**
+```csharp
+if (user is { IsActive: true, EmailConfirmed: true })
+{
+    // ...
+}
+
+// Switch expressions
+var status = user switch
+{
+    { IsActive: true, EmailConfirmed: true } => "Active",
+    { IsActive: true, EmailConfirmed: false } => "Pending",
+    _ => "Inactive"
+};
+```
+
+## Optimizely-Specific Code Quality Patterns
+
+### Content Type Definitions
+
+**Best Practice:** Use proper inheritance and interfaces for Optimizely content types
+
+```csharp
+/// <summary>
+/// Base page type for Optimizely CMS.
+/// </summary>
+[ContentType(
+    GUID = "12345678-1234-1234-1234-123456789012",
+    DisplayName = "Standard Page",
+    Description = "Standard page content type")]
+public class StandardPage : PageData
+{
+    /// <summary>
+    /// Gets or sets the page title.
+    /// </summary>
+    [Display(
+        Name = "Title",
+        Description = "The page title",
+        Order = 10)]
+    [CultureSpecific]
+    public virtual string? Title { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the page content.
+    /// </summary>
+    [Display(
+        Name = "Content",
+        Description = "The main content area",
+        Order = 20)]
+    [CultureSpecific]
+    public virtual XhtmlString? MainContent { get; set; }
+}
+```
+
+### Service Layer Pattern for Optimizely
+
+```csharp
+/// <summary>
+/// Service for managing Optimizely content operations.
+/// </summary>
+public interface IContentService
+{
+    /// <summary>
+    /// Gets a page by its content reference.
+    /// </summary>
+    /// <typeparam name="T">The type of content to retrieve.</typeparam>
+    /// <param name="contentLink">The content reference.</param>
+    /// <returns>The content if found; otherwise, null.</returns>
+    T? GetPage<T>(ContentReference contentLink) where T : PageData;
+}
+
+/// <summary>
+/// Implementation of content service using Optimizely APIs.
+/// </summary>
+public class ContentService : IContentService
+{
+    private readonly IContentLoader _contentLoader;
+    private readonly ILogger<ContentService> _logger;
+    
+    public ContentService(
+        IContentLoader contentLoader,
+        ILogger<ContentService> logger)
+    {
+        _contentLoader = contentLoader ?? throw new ArgumentNullException(nameof(contentLoader));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+    
+    /// <inheritdoc />
+    public T? GetPage<T>(ContentReference contentLink) where T : PageData
+    {
+        try
+        {
+            return _contentLoader.Get<T>(contentLink);
+        }
+        catch (ContentNotFoundException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Content not found. ContentLink: {ContentLink}",
+                contentLink);
+            return null;
+        }
+    }
+}
+```
+
+### Repository Pattern with Optimizely
+
+```csharp
+/// <summary>
+/// Repository for Optimizely content operations.
+/// </summary>
+public interface IContentRepository
+{
+    /// <summary>
+    /// Gets children of a content reference.
+    /// </summary>
+    /// <typeparam name="T">The type of content to retrieve.</typeparam>
+    /// <param name="parentLink">The parent content reference.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Collection of child content items.</returns>
+    Task<IEnumerable<T>> GetChildrenAsync<T>(
+        ContentReference parentLink,
+        CancellationToken cancellationToken = default) where T : IContent;
+}
+
+/// <summary>
+/// Optimizely implementation of content repository.
+/// </summary>
+public class OptimizelyContentRepository : IContentRepository
+{
+    private readonly IContentLoader _contentLoader;
+    
+    public OptimizelyContentRepository(IContentLoader contentLoader)
+    {
+        _contentLoader = contentLoader ?? throw new ArgumentNullException(nameof(contentLoader));
+    }
+    
+    /// <inheritdoc />
+    public Task<IEnumerable<T>> GetChildrenAsync<T>(
+        ContentReference parentLink,
+        CancellationToken cancellationToken = default) where T : IContent
+    {
+        // Optimizely operations are typically synchronous
+        var children = _contentLoader.GetChildren<T>(parentLink);
+        return Task.FromResult(children);
+    }
+}
 ```
 
 ## Resources
@@ -1527,3 +1834,9 @@ indent_style = space
 - **EditorConfig:** https://editorconfig.org/
 - **StyleCop Analyzers:** https://github.com/DotNetAnalyzers/StyleCopAnalyzers
 - **.NET Code Analysis:** https://learn.microsoft.com/dotnet/fundamentals/code-analysis/
+- **Roslyn Analyzers:** https://github.com/dotnet/roslyn-analyzers
+- **SonarAnalyzer for C#:** https://www.sonarsource.com/products/codeanalyzers/sonarcsharp.html
+
+### Optimizely Code Quality
+- **Optimizely Coding Standards:** https://docs.developers.optimizely.com/content-management-system/docs/coding-standards
+- **Optimizely Best Practices:** https://docs.developers.optimizely.com/content-management-system/docs/best-practices

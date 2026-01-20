@@ -172,6 +172,33 @@ var posts = await _context.Posts
     .ToListAsync();
 ```
 
+**Good: Compiled Queries (EF Core)**
+```csharp
+// Define compiled query once (reusable, faster)
+private static readonly Func<AppDbContext, Guid, Task<User?>> GetUserByIdQuery =
+    EF.CompileAsyncQuery((AppDbContext context, Guid id) =>
+        context.Users.FirstOrDefault(u => u.Id == id));
+
+// Use compiled query (no LINQ compilation overhead)
+public async Task<User?> GetUserAsync(Guid id)
+{
+    return await GetUserByIdQuery(_context, id);
+}
+
+// Compiled query for complex scenarios
+private static readonly Func<AppDbContext, string, IAsyncEnumerable<User>> GetUsersByEmailQuery =
+    EF.CompileAsyncQuery((AppDbContext context, string email) =>
+        context.Users.Where(u => u.Email.Contains(email)));
+
+public async IAsyncEnumerable<User> GetUsersByEmailAsync(string email)
+{
+    await foreach (var user in GetUsersByEmailQuery(_context, email))
+    {
+        yield return user;
+    }
+}
+```
+
 ## Caching Strategies
 
 ### Redis Caching
@@ -523,6 +550,39 @@ public class EmailProcessor : BackgroundService
 - Webhook delivery
 - Long-running operations
 
+## Response Compression
+
+**Impact:** 60-80% size reduction, faster page loads
+
+```csharp
+// Program.cs - Enable response compression
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+    {
+        "application/json",
+        "application/xml",
+        "text/css",
+        "application/javascript"
+    });
+});
+
+builder.Services.Configure<BrotliCompressionProviderOptions>(options =>
+{
+    options.Level = CompressionLevel.Optimal;
+});
+
+builder.Services.Configure<GzipCompressionProviderOptions>(options =>
+{
+    options.Level = CompressionLevel.Optimal;
+});
+
+app.UseResponseCompression();
+```
+
 ## CDN (Content Delivery Network)
 
 **Impact:** 50%+ latency reduction for global users
@@ -749,6 +809,110 @@ AS PARTITION OrderDateRange
 TO (fg1, fg2, fg3, fg4);
 ```
 
+## Optimizely-Specific Performance Optimizations
+
+### Content Caching
+
+**Optimizely Built-in Caching:**
+```csharp
+// Optimizely automatically caches content, but configure properly
+public class OptimizedContentService
+{
+    private readonly IContentLoader _contentLoader;
+    private readonly IContentCache _contentCache;
+
+    public OptimizedContentService(IContentLoader contentLoader, IContentCache contentCache)
+    {
+        _contentLoader = contentLoader;
+        _contentCache = contentCache;
+    }
+
+    // Use GetChildren with caching
+    public IEnumerable<PageData> GetCachedPages(ContentReference parent)
+    {
+        // Optimizely caches content automatically
+        return _contentLoader.GetChildren<PageData>(parent);
+    }
+
+    // Clear cache on content publish
+    public void OnContentPublished(object sender, ContentEventArgs e)
+    {
+        _contentCache.Remove(e.ContentLink);
+    }
+}
+```
+
+### Content Delivery API Performance
+
+**Headless Optimizely with Caching:**
+```csharp
+// Use Optimizely Content Delivery API with response caching
+[ApiController]
+[Route("api/content")]
+public class ContentApiController : ControllerBase
+{
+    private readonly IContentLoader _contentLoader;
+
+    [HttpGet("{id}")]
+    [ResponseCache(Duration = 3600, Location = ResponseCacheLocation.Any)]
+    public IActionResult GetContent(int id)
+    {
+        var content = _contentLoader.Get<PageData>(new ContentReference(id));
+        if (content == null) return NotFound();
+        
+        return Ok(new
+        {
+            Id = content.ContentLink.ID,
+            Name = content.Name,
+            Url = content.LinkURL
+        });
+    }
+}
+```
+
+### Optimizely Commerce Performance
+
+**Product Catalog Caching:**
+```csharp
+public class ProductService
+{
+    private readonly IContentLoader _contentLoader;
+    private readonly IDistributedCache _cache;
+
+    public async Task<ProductContent> GetProductAsync(int productId)
+    {
+        var cacheKey = $"product:{productId}";
+        var cached = await _cache.GetStringAsync(cacheKey);
+        
+        if (cached != null)
+        {
+            return JsonSerializer.Deserialize<ProductContent>(cached);
+        }
+
+        var product = _contentLoader.Get<ProductContent>(new ContentReference(productId));
+        
+        if (product != null)
+        {
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(product), 
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+                });
+        }
+
+        return product;
+    }
+}
+```
+
+**Best Practices for Optimizely:**
+- Leverage Optimizely's built-in content caching
+- Use Content Delivery API for headless scenarios
+- Cache product catalogs and pricing
+- Use read replicas for content queries
+- Implement CDN for static assets and media
+- Use Optimizely's output cache for rendered pages
+
 ## Performance Monitoring
 
 ### Key Metrics
@@ -773,6 +937,21 @@ TO (fg1, fg2, fg3, fg4);
 - **OpenTelemetry** - Distributed tracing (.NET support)
 - **PerfView / dotMemory** - Profiling tools
 - **MiniProfiler** - Real-time performance profiling
+- **dotnet-counters** - Performance counter monitoring
+- **dotnet-trace** - Event tracing for .NET
+- **BenchmarkDotNet** - Micro-benchmarking framework
+
+**.NET Performance Tools:**
+```bash
+# Monitor performance counters
+dotnet-counters monitor --process-id <pid> System.Runtime
+
+# Collect trace
+dotnet-trace collect --process-id <pid> --providers Microsoft-DotNETCore-SampleProfiler
+
+# Profile with dotMemory
+# Use JetBrains dotMemory for memory profiling
+```
 
 ## Performance Optimization Checklist
 
@@ -792,10 +971,13 @@ TO (fg1, fg2, fg3, fg4);
 
 ### Application
 - [ ] Async processing for long tasks
-- [ ] Response compression enabled (gzip)
+- [ ] Response compression enabled (gzip/brotli)
 - [ ] Load balancing configured
 - [ ] Health checks implemented
 - [ ] Resource limits set (CPU, memory)
+- [ ] Compiled queries for frequently executed queries
+- [ ] Response caching configured (OutputCache)
+- [ ] Minimal APIs for high-performance endpoints
 
 ### Monitoring
 - [ ] Application Insights configured (Azure)
@@ -817,7 +999,12 @@ TO (fg1, fg2, fg3, fg4);
 7. **No CDN** - Serving static assets from origin (use Azure CDN/Cloudflare)
 8. **Not using async/await** - Blocking I/O operations
 9. **Over-fetching data** - Loading entire entities instead of projections
-10. **Not using compiled queries** - Recompiling LINQ queries repeatedly
+10. **Not using compiled queries** - Recompiling LINQ queries repeatedly (use EF.CompileAsyncQuery)
+11. **No response compression** - Not compressing responses (enable Brotli/Gzip)
+12. **Synchronous I/O in async methods** - Using .Result or .Wait() (use async/await throughout)
+13. **Not using Minimal APIs** - Overhead of MVC for simple endpoints (use Minimal APIs for performance)
+14. **Optimizely-specific: Not leveraging content caching** - Optimizely has built-in content caching
+15. **Optimizely-specific: Not using content delivery API** - Use Optimizely Content Delivery API for headless scenarios
 
 ## Resources
 
@@ -840,6 +1027,11 @@ TO (fg1, fg2, fg3, fg4);
 - **Application Insights:** https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview
 - **OpenTelemetry .NET:** https://opentelemetry.io/docs/instrumentation/net/
 
+### Optimizely Performance
+- **Optimizely Performance Best Practices:** https://docs.developers.optimizely.com/content-management-system/docs/performance
+- **Optimizely Content Delivery API:** https://docs.developers.optimizely.com/content-management-system/docs/content-delivery-api
+
 ### General
 - **Web Performance:** https://web.dev/performance/
 - **Database Indexing:** https://use-the-index-luke.com/
+- **.NET Performance Blog:** https://devblogs.microsoft.com/dotnet/tag/performance/

@@ -190,17 +190,36 @@ app.Use(async (context, next) =>
 **Risk:** Outdated dependencies with known vulnerabilities
 
 **Mitigation:**
-- Regular dependency updates (npm audit, pip-audit)
+- Regular dependency updates
 - Use Dependabot/Renovate for automated updates
 - Monitor CVE databases
 - Software composition analysis (SCA) in CI/CD
 - Lock file integrity checks
 
+**.NET-Specific Tools:**
 ```bash
-# Check for vulnerabilities
-npm audit fix
-pip-audit --fix
+# Check for vulnerable NuGet packages
+dotnet list package --vulnerable --include-transitive
+
+# Update packages
+dotnet list package --outdated
+dotnet add package <PackageName> --version <LatestVersion>
+
+# Use .NET security advisories
+# https://github.com/dotnet/announcements/security
 ```
+
+**NuGet Package Security:**
+- Enable package source mapping in `NuGet.config`
+- Use signed packages from trusted sources
+- Verify package integrity with `nuget verify`
+- Use `dotnet restore --no-cache` in CI/CD for reproducible builds
+
+**Automated Scanning:**
+- **OWASP Dependency-Check** - Scans .NET dependencies
+- **Snyk** - .NET vulnerability scanning
+- **WhiteSource** - .NET SCA tool
+- **GitHub Dependabot** - Automated PRs for .NET packages
 
 #### 7. Authentication Failures
 **Risk:** Weak passwords, session hijacking, credential stuffing
@@ -211,6 +230,50 @@ pip-audit --fix
 - Strong password policies (12+ chars, complexity)
 - Session timeout (15 mins idle, 8 hours absolute)
 - FIDO2/WebAuthn for passwordless auth
+
+**.NET Implementation:**
+```csharp
+// ASP.NET Core Identity with security settings
+builder.Services.AddIdentity<User, Role>(options =>
+{
+    // Password policy
+    options.Password.RequireDigit = true;
+    options.Password.RequiredLength = 12;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireLowercase = true;
+    
+    // Account lockout
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.AllowedForNewUsers = true;
+    
+    // User settings
+    options.User.RequireUniqueEmail = true;
+    
+    // Sign-in settings
+    options.SignIn.RequireConfirmedEmail = true;
+})
+.AddEntityFrameworkStores<AppDbContext>()
+.AddDefaultTokenProviders();
+
+// Rate limiting for login endpoint
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("LoginPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+});
+
+// Apply to login endpoint
+app.MapPost("/api/auth/login", Login)
+   .RequireRateLimiting("LoginPolicy");
+```
 
 #### 8. Software & Data Integrity Failures
 **Risk:** CI/CD pipeline compromise, unsigned updates
@@ -239,6 +302,73 @@ pip-audit --fix
 - Allow-list for remote resources
 - Network segmentation
 - Disable unnecessary protocols (file://, gopher://)
+
+**.NET Implementation:**
+```csharp
+// Bad: Vulnerable to SSRF
+public async Task<IActionResult> FetchUrl(string url)
+{
+    using var client = new HttpClient();
+    var response = await client.GetAsync(url); // Dangerous!
+    return Ok(await response.Content.ReadAsStringAsync());
+}
+
+// Good: SSRF protection
+public class SafeHttpClient
+{
+    private static readonly HashSet<string> AllowedSchemes = new() { "https", "http" };
+    private static readonly HashSet<string> BlockedHosts = new() 
+    { 
+        "localhost", "127.0.0.1", "0.0.0.0", 
+        "169.254.169.254", // AWS metadata
+        "10.0.0.0", "172.16.0.0", "192.168.0.0" // Private IPs
+    };
+
+    public static bool IsUrlSafe(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+
+        if (!AllowedSchemes.Contains(uri.Scheme.ToLower()))
+            return false;
+
+        var host = uri.Host.ToLower();
+        if (BlockedHosts.Contains(host))
+            return false;
+
+        // Check for private IP ranges
+        if (IPAddress.TryParse(host, out var ip))
+        {
+            if (ip.IsIPv4MappedToIPv6)
+                ip = ip.MapToIPv4();
+            
+            if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                var bytes = ip.GetAddressBytes();
+                // Check private IP ranges
+                if (bytes[0] == 10 || 
+                    (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                    (bytes[0] == 192 && bytes[1] == 168))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+// Usage
+public async Task<IActionResult> FetchUrl(string url)
+{
+    if (!SafeHttpClient.IsUrlSafe(url))
+        return BadRequest("Invalid or unsafe URL");
+
+    using var client = new HttpClient();
+    client.Timeout = TimeSpan.FromSeconds(10); // Prevent long-running requests
+    var response = await client.GetAsync(url);
+    return Ok(await response.Content.ReadAsStringAsync());
+}
+```
 
 ## Input Validation (Prevents 70%+ Vulnerabilities)
 
@@ -379,44 +509,165 @@ app.Use(async (context, next) =>
 // Good: Secrets from configuration/environment in .NET
 var builder = WebApplication.CreateBuilder(args);
 
-// Add Azure Key Vault or other providers as needed
-// builder.Configuration.AddAzureKeyVault(...);
+// Azure Key Vault integration
+if (builder.Environment.IsProduction())
+{
+    var keyVaultUrl = builder.Configuration["AzureKeyVault:Url"];
+    var clientId = builder.Configuration["AzureKeyVault:ClientId"];
+    var clientSecret = builder.Configuration["AzureKeyVault:ClientSecret"];
+    
+    builder.Configuration.AddAzureKeyVault(
+        new Uri(keyVaultUrl!),
+        new Azure.Identity.ClientSecretCredential(
+            builder.Configuration["AzureKeyVault:TenantId"]!,
+            clientId!,
+            clientSecret!
+        ),
+        new Azure.Extensions.AspNetCore.Configuration.Secrets.KeyVaultSecretManager()
+    );
+}
 
+// Or use Managed Identity (recommended for Azure)
+// builder.Configuration.AddAzureKeyVault(
+//     new Uri(keyVaultUrl!),
+//     new DefaultAzureCredential()
+// );
+
+// Access secrets
 var dbPassword = builder.Configuration["Database:Password"];
 if (string.IsNullOrWhiteSpace(dbPassword))
 {
     throw new InvalidOperationException("Database password not configured.");
 }
+
+// Use IOptions pattern for type-safe configuration
+builder.Services.Configure<DatabaseOptions>(
+    builder.Configuration.GetSection("Database"));
 ```
+
+**Secrets Management Best Practices:**
+- Use **Azure Key Vault** for Azure deployments
+- Use **AWS Secrets Manager** for AWS deployments
+- Use **HashiCorp Vault** for on-premises or multi-cloud
+- Never store secrets in `appsettings.json` (use User Secrets for local dev)
+- Use **Managed Identity** when possible (no credentials needed)
+- Rotate secrets regularly (90 days)
+- Use separate key vaults per environment
 
 ## API Security Checklist
 
 - [ ] Use HTTPS/TLS 1.3 only
 - [ ] Implement OAuth 2.1 + JWT for authentication
-- [ ] Rate limiting on all endpoints
-- [ ] Input validation on all inputs
-- [ ] Parameterized queries (prevent SQL injection)
-- [ ] Security headers configured
+- [ ] Rate limiting on all endpoints (ASP.NET Core Rate Limiting)
+- [ ] Input validation on all inputs (FluentValidation or Data Annotations)
+- [ ] Parameterized queries (prevent SQL injection - EF Core/Dapper)
+- [ ] Security headers configured (middleware or NWebSec)
 - [ ] CORS properly configured (not `*` in production)
 - [ ] API versioning implemented
-- [ ] Error messages don't leak system info
-- [ ] Logging authentication events
-- [ ] MFA for admin accounts
+- [ ] Error messages don't leak system info (custom exception handlers)
+- [ ] Logging authentication events (Serilog + Application Insights)
+- [ ] MFA for admin accounts (ASP.NET Core Identity + TOTP)
 - [ ] Regular security audits (quarterly)
+- [ ] Dependency scanning (dotnet list package --vulnerable)
+- [ ] Secrets stored in Key Vault (not in configuration files)
+- [ ] CSRF protection enabled (Antiforgery middleware)
+- [ ] Content Security Policy (CSP) headers configured
+- [ ] API keys rotated regularly (if used)
+- [ ] Health checks don't expose sensitive information
 
 ## Common Security Pitfalls
 
-1. **Client-side validation only** - Always validate on server
-2. **Using `Random`/`Guid.NewGuid()` for tokens** - Use `RandomNumberGenerator`
-3. **Storing passwords with weak algorithms (e.g., bcrypt with low cost, SHA-256)** - Use Argon2id (2025 standard) or strong PBKDF2
-4. **Trusting user input** - Validate and sanitize everything
-5. **Weak CORS configuration** - Don't use `*` in production
-6. **Insufficient logging** - Log all authentication/authorization events
-7. **No rate limiting** - Implement on all public endpoints
+1. **Client-side validation only** - Always validate on server (use FluentValidation or Data Annotations)
+2. **Using `Random`/`Guid.NewGuid()` for tokens** - Use `RandomNumberGenerator` for cryptographic operations
+3. **Storing passwords with weak algorithms (e.g., bcrypt with low cost, SHA-256)** - Use Argon2id (2025 standard) or strong PBKDF2 (ASP.NET Core Identity uses PBKDF2 by default)
+4. **Trusting user input** - Validate and sanitize everything (use HtmlSanitizer for HTML input)
+5. **Weak CORS configuration** - Don't use `*` in production, specify exact origins
+6. **Insufficient logging** - Log all authentication/authorization events (use Serilog with structured logging)
+7. **No rate limiting** - Implement on all public endpoints (ASP.NET Core Rate Limiting in .NET 7+)
+8. **Storing secrets in appsettings.json** - Use Azure Key Vault, User Secrets, or environment variables
+9. **Not using HTTPS in production** - Always enforce HTTPS redirection
+10. **Weak JWT validation** - Always validate issuer, audience, and signing key
+11. **Missing CSRF protection** - Enable Antiforgery middleware for state-changing operations
+12. **Exposing stack traces** - Use custom exception handlers in production
+13. **SQL injection with raw queries** - Always use parameterized queries or EF Core LINQ
+14. **No dependency scanning** - Regularly check for vulnerable NuGet packages
+15. **Optimizely-specific: Not securing content APIs** - Implement proper authorization for Optimizely Content API endpoints
+
+## Optimizely-Specific Security Considerations
+
+### Content Security
+- **Access Control:** Implement proper authorization for content editing and publishing
+- **API Security:** Secure Optimizely Content API endpoints with JWT authentication
+- **User Management:** Use Optimizely's built-in user management with proper role assignments
+- **Content Versioning:** Leverage Optimizely's versioning for audit trails and rollback capabilities
+
+```csharp
+// Optimizely authorization example
+[Authorize(Roles = "WebEditors, Administrators")]
+public class ContentController : ControllerBase
+{
+    private readonly IContentLoader _contentLoader;
+    private readonly IContentRepository _contentRepository;
+
+    public ContentController(IContentLoader contentLoader, IContentRepository contentRepository)
+    {
+        _contentLoader = contentLoader;
+        _contentRepository = contentRepository;
+    }
+
+    [HttpPost("publish/{contentId}")]
+    public async Task<IActionResult> PublishContent(int contentId)
+    {
+        // Additional authorization check
+        var content = _contentLoader.Get<PageData>(contentId);
+        if (!User.HasClaim("CanPublish", content.ContentTypeID.ToString()))
+        {
+            return Forbid();
+        }
+
+        // Publish content
+        _contentRepository.Publish(content, PublishAction.Publish);
+        return Ok();
+    }
+}
+```
+
+### Commerce Security
+- **Payment Data:** Never store credit card data (use PCI-compliant payment processors)
+- **Order Data:** Encrypt sensitive order information at rest
+- **API Keys:** Rotate Optimizely Commerce API keys regularly
+- **Access Control:** Implement proper role-based access for commerce operations
+
+## .NET Security Libraries & Tools
+
+### Security Libraries
+- **NWebSec** - Security headers middleware for ASP.NET Core
+- **HtmlSanitizer (Ganss.Xss)** - HTML sanitization library
+- **Fido2NetLib** - FIDO2/WebAuthn implementation for .NET
+- **Isopoh.Cryptography.Argon2** - Argon2 password hashing
+- **Microsoft.AspNetCore.Identity** - Built-in authentication and authorization
+
+### Security Tools
+- **dotnet list package --vulnerable** - Check for vulnerable NuGet packages
+- **OWASP Dependency-Check** - Dependency vulnerability scanning
+- **Snyk** - .NET security scanning
+- **Azure Security Center** - Security monitoring for Azure deployments
+- **Application Insights** - Security event logging and monitoring
 
 ## Resources
 
+### General Security
 - **OWASP Top 10 (2025):** https://owasp.org/www-project-top-ten/
 - **OWASP Cheat Sheets:** https://cheatsheetseries.owasp.org/
 - **CWE Top 25:** https://cwe.mitre.org/top25/
 - **NIST Guidelines:** https://www.nist.gov/cybersecurity
+
+### .NET Security
+- **ASP.NET Core Security:** https://learn.microsoft.com/aspnet/core/security/
+- **.NET Security Best Practices:** https://learn.microsoft.com/dotnet/standard/security/
+- **Azure Key Vault:** https://learn.microsoft.com/azure/key-vault/
+- **ASP.NET Core Identity:** https://learn.microsoft.com/aspnet/core/security/authentication/identity
+
+### Optimizely Security
+- **Optimizely Security Documentation:** https://docs.developers.optimizely.com/content-management-system/docs/security
+- **Optimizely Content API Security:** https://docs.developers.optimizely.com/content-management-system/docs/content-delivery-api

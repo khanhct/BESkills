@@ -1,6 +1,6 @@
 ---
 name: backend-development
-description: Build robust backend systems with modern technologies (Node.js, Python, Go, Rust), frameworks (NestJS, FastAPI, Django), databases (PostgreSQL, MongoDB, Redis), APIs (REST, GraphQL, gRPC), authentication (OAuth 2.1, JWT), testing strategies, security best practices (OWASP Top 10), performance optimization, scalability patterns (microservices, caching, sharding), DevOps practices (Docker, Kubernetes, CI/CD), and monitoring. Use when designing APIs, implementing authentication, optimizing database queries, setting up CI/CD pipelines, handling security vulnerabilities, building microservices, or developing production-ready backend systems.
+description: Build robust backend systems with C#/.NET Core, ASP.NET Core (MVC, Web API, Minimal APIs), Optimizely CMS/Commerce, databases (SQL Server, MongoDB, Redis), APIs (REST, GraphQL, gRPC), authentication (OAuth 2.1, JWT, ASP.NET Core Identity), testing strategies (xUnit, NUnit, Moq), security best practices (OWASP Top 10), performance optimization, scalability patterns (microservices, caching, sharding), DevOps practices (Docker, Kubernetes, CI/CD), and monitoring (Application Insights, OpenTelemetry). Use when designing APIs, implementing authentication, optimizing database queries, setting up CI/CD pipelines, handling security vulnerabilities, building microservices, or developing production-ready backend systems.
 license: MIT
 version: 1.0.0
 ---
@@ -23,10 +23,12 @@ Production-ready backend development with modern technologies, best practices, a
 
 ## Technology Selection Guide
 
-**Languages:** Node.js/TypeScript (full-stack), Python (data/ML), Go (concurrency), Rust (performance)
-**Frameworks:** NestJS, FastAPI, Django, Express, Gin
-**Databases:** PostgreSQL (ACID), MongoDB (flexible schema), Redis (caching)
-**APIs:** REST (simple), GraphQL (flexible), gRPC (performance)
+**Languages:** C# (.NET 8+) - Cross-platform, high-performance, enterprise-grade
+**Frameworks:** ASP.NET Core MVC (full-stack), ASP.NET Core Web API (REST APIs), Minimal APIs (microservices), Optimizely (CMS/Commerce)
+**Databases:** SQL Server (ACID, enterprise), MongoDB (flexible schema), Redis (caching, sessions)
+**APIs:** REST (ASP.NET Core Web API), GraphQL (HotChocolate), gRPC (.NET gRPC)
+**ORMs:** Entity Framework Core (rapid development), Dapper (high performance)
+**Message Queues:** Azure Service Bus, RabbitMQ, Kafka (via Confluent.Kafka), MassTransit
 
 See: `references/backend-technologies.md` for detailed comparisons
 
@@ -53,43 +55,74 @@ See: `references/backend-technologies.md` for detailed comparisons
 
 ## Key Best Practices (2025)
 
-**Security:** Argon2id passwords, parameterized queries (98% SQL injection reduction), OAuth 2.1 + PKCE, rate limiting, security headers
+**Security:** ASP.NET Core Identity with Argon2id/BCrypt passwords, parameterized queries via EF Core (98% SQL injection reduction), OAuth 2.1 + PKCE, rate limiting (AspNetCoreRateLimit), security headers (NWebsec), Azure Key Vault for secrets
 
-**Performance:** Redis caching (90% DB load reduction), database indexing (30% I/O reduction), CDN (50%+ latency cut), connection pooling
+**Performance:** Redis caching via StackExchange.Redis (90% DB load reduction), SQL Server indexing (30% I/O reduction), CDN (50%+ latency cut), EF Core connection pooling, compiled queries for hot paths
 
-**Testing:** 70-20-10 pyramid (unit-integration-E2E), Vitest 50% faster than Jest, contract testing for microservices, 83% migrations fail without tests
+**Testing:** 70-20-10 pyramid (unit-integration-E2E), xUnit/NUnit for unit tests, Moq/NSubstitute for mocking, WebApplicationFactory for integration tests, FluentAssertions for readable assertions, 83% migrations fail without tests
 
-**DevOps:** Blue-green/canary deployments, feature flags (90% fewer failures), Kubernetes 84% adoption, Prometheus/Grafana monitoring, OpenTelemetry tracing
+**DevOps:** Blue-green/canary deployments, feature flags (90% fewer failures), Kubernetes 84% adoption, Application Insights/Prometheus/Grafana monitoring, OpenTelemetry tracing, Azure DevOps/GitHub Actions CI/CD
 
 ## Quick Decision Matrix
 
 | Need | Choose |
 |------|--------|
-| Fast development | Node.js + NestJS |
-| Data/ML integration | Python + FastAPI |
-| High concurrency | Go + Gin |
-| Max performance | Rust + Axum |
-| ACID transactions | PostgreSQL |
+| Fast development | ASP.NET Core Web API + EF Core |
+| Full-stack web app | ASP.NET Core MVC |
+| Simple APIs/microservices | ASP.NET Core Minimal APIs |
+| CMS/Content management | Optimizely CMS + ASP.NET Core |
+| E-commerce platform | Optimizely Commerce |
+| ACID transactions | SQL Server |
 | Flexible schema | MongoDB |
-| Caching | Redis |
-| Internal services | gRPC |
-| Public APIs | GraphQL/REST |
-| Real-time events | Kafka |
+| Caching/Sessions | Redis (StackExchange.Redis) |
+| Internal microservices | .NET gRPC |
+| Public APIs | GraphQL (HotChocolate) / REST (Web API) |
+| Real-time features | SignalR |
+| Message queues (Azure) | Azure Service Bus |
+| Message queues (self-hosted) | RabbitMQ |
+| Event streaming | Kafka (Confluent.Kafka) / Azure Event Hubs |
+| Background jobs | Hangfire / Quartz.NET |
 
 ## Implementation Checklist
 
-**API:** Choose style → Design schema → Validate input → Add auth → Rate limiting → Documentation → Error handling
+**API:** Choose style (REST/GraphQL/gRPC) → Design schema → Validate input (FluentValidation) → Add auth (ASP.NET Core Identity/JWT) → Rate limiting → OpenAPI/Swagger docs → ProblemDetails error handling
 
-**Database:** Choose DB → Design schema → Create indexes → Connection pooling → Migration strategy → Backup/restore → Test performance
+**Database:** Choose DB (SQL Server/MongoDB) → Design schema → Create indexes (EF Core migrations) → Connection pooling (EF Core default) → Migration strategy → Backup/restore → Test performance (EF Core compiled queries)
 
-**Security:** OWASP Top 10 → Parameterized queries → OAuth 2.1 + JWT → Security headers → Rate limiting → Input validation → Argon2id passwords
+**Security:** OWASP Top 10 → Parameterized queries (EF Core/Dapper) → OAuth 2.1 + JWT → Security headers (NWebsec) → Rate limiting (AspNetCoreRateLimit) → Input validation (FluentValidation) → ASP.NET Core Identity with Argon2id passwords → Azure Key Vault for secrets
 
-**Testing:** Unit 70% → Integration 20% → E2E 10% → Load tests → Migration tests → Contract tests (microservices)
+**Testing:** Unit 70% (xUnit/NUnit) → Integration 20% (WebApplicationFactory) → E2E 10% → Load tests → EF Core migration tests → Contract tests (microservices)
 
-**Deployment:** Docker → CI/CD → Blue-green/canary → Feature flags → Monitoring → Logging → Health checks
+**Deployment:** Docker → CI/CD (Azure DevOps/GitHub Actions) → Blue-green/canary → Feature flags → Application Insights monitoring → Serilog logging → Health checks (ASP.NET Core health checks)
 
 ## Resources
 
-- OWASP Top 10: https://owasp.org/www-project-top-ten/
-- OAuth 2.1: https://oauth.net/2.1/
-- OpenTelemetry: https://opentelemetry.io/
+### .NET & ASP.NET Core
+- **ASP.NET Core Documentation:** https://learn.microsoft.com/aspnet/core/
+- **.NET Documentation:** https://learn.microsoft.com/dotnet/
+- **Entity Framework Core:** https://learn.microsoft.com/ef/core/
+- **ASP.NET Core Web API:** https://learn.microsoft.com/aspnet/core/web-api/
+
+### Optimizely
+- **Optimizely Documentation:** https://docs.developers.optimizely.com/
+- **Optimizely Content Cloud:** https://docs.developers.optimizely.com/content-management-system/
+- **Optimizely Commerce:** https://docs.developers.optimizely.com/commerce/
+
+### Security & Authentication
+- **OWASP Top 10:** https://owasp.org/www-project-top-ten/
+- **OAuth 2.1:** https://oauth.net/2.1/
+- **ASP.NET Core Security:** https://learn.microsoft.com/aspnet/core/security/
+
+### Testing
+- **xUnit:** https://xunit.net/
+- **NUnit:** https://nunit.org/
+- **Moq:** https://github.com/moq/moq4
+
+### Monitoring & Observability
+- **Application Insights:** https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview
+- **OpenTelemetry:** https://opentelemetry.io/
+- **Serilog:** https://serilog.net/
+
+### GraphQL & gRPC
+- **HotChocolate (GraphQL):** https://chillicream.com/docs/hotchocolate
+- **.NET gRPC:** https://learn.microsoft.com/aspnet/core/grpc/

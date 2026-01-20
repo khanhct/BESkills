@@ -1,6 +1,6 @@
 # Backend Architecture Patterns
 
-Microservices, event-driven architecture, and scalability patterns (2025).
+Microservices, event-driven architecture, and scalability patterns for C#/.NET Core, ASP.NET, and Optimizely (2025).
 
 ## Monolith vs Microservices
 
@@ -69,9 +69,9 @@ Microservices, event-driven architecture, and scalability patterns (2025).
 **Concept:** Each service owns its database
 
 ```
-User Service → User DB (PostgreSQL)
-Product Service → Product DB (MongoDB)
-Order Service → Order DB (PostgreSQL)
+User Service → User DB (SQL Server)
+Product Service → Product DB (SQL Server / MongoDB)
+Order Service → Order DB (SQL Server)
 ```
 
 **Benefits:**
@@ -92,8 +92,9 @@ Client
   ▼
 ┌─────────────────┐
 │  API Gateway    │  - Authentication
-│  (Kong/NGINX)   │  - Rate limiting
-└────────┬────────┘  - Request routing
+│  (Ocelot/YARP/  │  - Rate limiting
+│   Azure APIM)   │  - Request routing
+└────────┬────────┘  - Load balancing
          │
     ┌────┴────┬────────┬────────┐
     ▼         ▼        ▼        ▼
@@ -107,80 +108,188 @@ Client
 - Rate limiting
 - Request/response transformation
 - Caching
+- Load balancing
 
-**Implementation (Kong):**
-```yaml
-services:
-  - name: user-service
-    url: http://user-service:3000
-    routes:
-      - name: user-route
-        paths:
-          - /api/users
+**Implementation (Ocelot):**
+```json
+{
+  "Routes": [
+    {
+      "DownstreamPathTemplate": "/api/users/{everything}",
+      "DownstreamScheme": "https",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "user-service",
+          "Port": 5001
+        }
+      ],
+      "UpstreamPathTemplate": "/api/users/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "RateLimitOptions": {
+        "EnableRateLimiting": true,
+        "Period": "1m",
+        "Limit": 100
+      },
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer"
+      }
+    }
+  ],
+  "GlobalConfiguration": {
+    "BaseUrl": "https://api.example.com"
+  }
+}
+```
 
-  - name: product-service
-    url: http://product-service:3001
-    routes:
-      - name: product-route
-        paths:
-          - /api/products
+**Implementation (YARP - Yet Another Reverse Proxy):**
+```csharp
+// Program.cs
+builder.Services.AddReverseProxy()
+    .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 
-plugins:
-  - name: rate-limiting
-    config:
-      minute: 100
-  - name: jwt
+// appsettings.json
+{
+  "ReverseProxy": {
+    "Routes": {
+      "user-route": {
+        "ClusterId": "user-cluster",
+        "Match": {
+          "Path": "/api/users/{**catch-all}"
+        }
+      }
+    },
+    "Clusters": {
+      "user-cluster": {
+        "Destinations": {
+          "destination1": {
+            "Address": "https://user-service:5001"
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 ### Service Discovery
 
 **Concept:** Services find each other dynamically
 
-```typescript
-// Consul service discovery
-import Consul from 'consul';
-
-const consul = new Consul();
+**Using Consul.NET:**
+```csharp
+using Consul;
 
 // Register service
-await consul.agent.service.register({
-  name: 'user-service',
-  address: '192.168.1.10',
-  port: 3000,
-  check: {
-    http: 'http://192.168.1.10:3000/health',
-    interval: '10s',
-  },
-});
+var consulClient = new ConsulClient();
+
+var registration = new AgentServiceRegistration
+{
+    ID = "user-service-1",
+    Name = "user-service",
+    Address = "192.168.1.10",
+    Port = 5001,
+    Check = new AgentServiceCheck
+    {
+        HTTP = "https://192.168.1.10:5001/health",
+        Interval = TimeSpan.FromSeconds(10)
+    }
+};
+
+await consulClient.Agent.ServiceRegister(registration);
 
 // Discover service
-const services = await consul.catalog.service.nodes('product-service');
-const productServiceUrl = `http://${services[0].ServiceAddress}:${services[0].ServicePort}`;
+var services = await consulClient.Catalog.Service("product-service");
+var productServiceUrl = $"https://{services.Response[0].ServiceAddress}:{services.Response[0].ServicePort}";
+```
+
+**Using Steeltoe (Spring Cloud for .NET):**
+```csharp
+// Program.cs
+builder.Services.AddServiceDiscovery(options =>
+{
+    options.UseConsul(options =>
+    {
+        options.Host = "localhost";
+        options.Port = 8500;
+    });
+});
+
+// Service registration
+builder.Services.AddHealthChecks();
+builder.Services.AddSingleton<IHostedService, ConsulHostedService>();
+```
+
+**Using Azure Service Discovery:**
+```csharp
+// Azure Service Fabric or Azure Container Apps
+// Services automatically discover each other via service names
+var httpClient = new HttpClient();
+var response = await httpClient.GetAsync("http://product-service/api/products");
 ```
 
 ### Circuit Breaker Pattern
 
 **Concept:** Stop calling failing service, prevent cascade failures
 
-```typescript
-import CircuitBreaker from 'opossum';
+**Using Polly (Standard .NET Resilience Library):**
+```csharp
+using Polly;
+using Polly.CircuitBreaker;
 
-const breaker = new CircuitBreaker(callExternalService, {
-  timeout: 3000, // 3s timeout
-  errorThresholdPercentage: 50, // Open circuit after 50% failures
-  resetTimeout: 30000, // Try again after 30s
+// Circuit breaker policy
+var circuitBreakerPolicy = Policy
+    .Handle<HttpRequestException>()
+    .Or<TaskCanceledException>()
+    .CircuitBreakerAsync(
+        handledEventsAllowedBeforeBreaking: 5,
+        durationOfBreak: TimeSpan.FromSeconds(30),
+        onBreak: (exception, duration) =>
+        {
+            _logger.LogWarning($"Circuit breaker opened for {duration}");
+        },
+        onReset: () =>
+        {
+            _logger.LogInformation("Circuit breaker reset");
+        }
+    );
+
+// Fallback policy
+var fallbackPolicy = Policy<string>
+    .Handle<BrokenCircuitException>()
+    .Or<HttpRequestException>()
+    .FallbackAsync("fallback-response", onFallbackAsync: (result) =>
+    {
+        _logger.LogWarning("Using fallback response");
+        return Task.CompletedTask;
+    });
+
+// Combined policy
+var policy = Policy.WrapAsync(fallbackPolicy, circuitBreakerPolicy);
+
+// Usage
+var result = await policy.ExecuteAsync(async () =>
+{
+    var response = await _httpClient.GetAsync("https://external-service/api/data");
+    return await response.Content.ReadAsStringAsync();
 });
+```
 
-breaker.on('open', () => {
-  console.log('Circuit breaker opened!');
-});
+**Using Polly with HttpClientFactory:**
+```csharp
+// Program.cs
+builder.Services.AddHttpClient<IProductService, ProductService>()
+    .AddPolicyHandler(GetRetryPolicy())
+    .AddPolicyHandler(GetCircuitBreakerPolicy());
 
-breaker.fallback(() => ({
-  data: 'fallback-response',
-  source: 'cache',
-}));
-
-const result = await breaker.fire(requestParams);
+static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
+{
+    return HttpPolicyExtensions
+        .HandleTransientHttpError()
+        .CircuitBreakerAsync(
+            handledEventsAllowedBeforeBreaking: 5,
+            durationOfBreak: TimeSpan.FromSeconds(30)
+        );
+}
 ```
 
 **States:**
@@ -224,28 +333,95 @@ Shipping Service
 
 **Concept:** Store events, not current state
 
-```typescript
+```csharp
 // Traditional: Store current state
+public class Account
 {
-  userId: '123',
-  balance: 500
+    public string UserId { get; set; }
+    public decimal Balance { get; set; }
 }
 
 // Event Sourcing: Store events
-[
-  { type: 'AccountCreated', userId: '123', timestamp: '...' },
-  { type: 'MoneyDeposited', amount: 1000, timestamp: '...' },
-  { type: 'MoneyWithdrawn', amount: 500, timestamp: '...' },
-]
+public abstract class DomainEvent
+{
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public string UserId { get; set; }
+}
+
+public class AccountCreatedEvent : DomainEvent
+{
+    public string AccountId { get; set; }
+}
+
+public class MoneyDepositedEvent : DomainEvent
+{
+    public decimal Amount { get; set; }
+}
+
+public class MoneyWithdrawnEvent : DomainEvent
+{
+    public decimal Amount { get; set; }
+}
 
 // Reconstruct state by replaying events
-const balance = events
-  .filter(e => e.userId === '123')
-  .reduce((acc, event) => {
-    if (event.type === 'MoneyDeposited') return acc + event.amount;
-    if (event.type === 'MoneyWithdrawn') return acc - event.amount;
-    return acc;
-  }, 0);
+public class AccountAggregate
+{
+    public string UserId { get; private set; }
+    public decimal Balance { get; private set; }
+
+    public void Apply(AccountCreatedEvent evt)
+    {
+        UserId = evt.UserId;
+        Balance = 0;
+    }
+
+    public void Apply(MoneyDepositedEvent evt)
+    {
+        Balance += evt.Amount;
+    }
+
+    public void Apply(MoneyWithdrawnEvent evt)
+    {
+        Balance -= evt.Amount;
+    }
+
+    public static AccountAggregate Replay(IEnumerable<DomainEvent> events)
+    {
+        var account = new AccountAggregate();
+        foreach (var evt in events)
+        {
+            account.Apply((dynamic)evt);
+        }
+        return account;
+    }
+}
+```
+
+**Using EventStore (Event Sourcing Database):**
+```csharp
+using EventStore.Client;
+
+var client = new EventStoreClient(EventStoreClientSettings.Create("esdb://localhost:2113"));
+
+// Append events
+var eventData = new EventData(
+    Uuid.NewUuid(),
+    "AccountCreated",
+    JsonSerializer.SerializeToUtf8Bytes(new AccountCreatedEvent { UserId = "123" })
+);
+
+await client.AppendToStreamAsync(
+    "account-123",
+    StreamState.Any,
+    new[] { eventData }
+);
+
+// Read events
+var events = await client.ReadStreamAsync(
+    Direction.Forwards,
+    "account-123",
+    StreamPosition.Start
+).ToListAsync();
 ```
 
 **Benefits:**
@@ -256,66 +432,151 @@ const balance = events
 
 ### Message Broker Patterns
 
-**Kafka (Event Streaming):**
-```typescript
-import { Kafka } from 'kafkajs';
-
-const kafka = new Kafka({
-  clientId: 'order-service',
-  brokers: ['kafka:9092'],
-});
+**Kafka (Event Streaming) with Confluent.Kafka:**
+```csharp
+using Confluent.Kafka;
 
 // Producer
-const producer = kafka.producer();
-await producer.send({
-  topic: 'order-events',
-  messages: [
-    {
-      key: order.id,
-      value: JSON.stringify({
-        type: 'OrderCreated',
-        orderId: order.id,
-        userId: order.userId,
-        total: order.total,
-      }),
-    },
-  ],
+var config = new ProducerConfig
+{
+    BootstrapServers = "kafka:9092",
+    ClientId = "order-service"
+};
+
+using var producer = new ProducerBuilder<string, string>(config).Build();
+
+var orderEvent = new
+{
+    Type = "OrderCreated",
+    OrderId = order.Id,
+    UserId = order.UserId,
+    Total = order.Total
+};
+
+await producer.ProduceAsync("order-events", new Message<string, string>
+{
+    Key = order.Id,
+    Value = JsonSerializer.Serialize(orderEvent)
 });
 
 // Consumer
-const consumer = kafka.consumer({ groupId: 'inventory-service' });
-await consumer.subscribe({ topic: 'order-events' });
-await consumer.run({
-  eachMessage: async ({ topic, partition, message }) => {
-    const event = JSON.parse(message.value.toString());
-    if (event.type === 'OrderCreated') {
-      await reserveInventory(event.orderId);
+var consumerConfig = new ConsumerConfig
+{
+    BootstrapServers = "kafka:9092",
+    GroupId = "inventory-service",
+    AutoOffsetReset = AutoOffsetReset.Earliest
+};
+
+using var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build();
+consumer.Subscribe("order-events");
+
+while (true)
+{
+    var result = consumer.Consume(TimeSpan.FromSeconds(1));
+    if (result != null)
+    {
+        var orderEvent = JsonSerializer.Deserialize<OrderCreatedEvent>(result.Message.Value);
+        if (orderEvent?.Type == "OrderCreated")
+        {
+            await ReserveInventory(orderEvent.OrderId);
+        }
     }
-  },
-});
+}
 ```
 
-**RabbitMQ (Task Queues):**
-```typescript
-import amqp from 'amqplib';
-
-const connection = await amqp.connect('amqp://localhost');
-const channel = await connection.createChannel();
+**Azure Event Hubs (Kafka-compatible):**
+```csharp
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
 
 // Producer
-await channel.assertQueue('email-queue', { durable: true });
-channel.sendToQueue('email-queue', Buffer.from(JSON.stringify({
-  to: user.email,
-  subject: 'Welcome!',
-  body: 'Thank you for signing up',
-})));
+await using var producerClient = new EventHubProducerClient(
+    connectionString,
+    eventHubName
+);
+
+var eventData = new EventData(JsonSerializer.Serialize(orderEvent));
+await producerClient.SendAsync(new[] { eventData });
 
 // Consumer
-await channel.consume('email-queue', async (msg) => {
-  const emailData = JSON.parse(msg.content.toString());
-  await sendEmail(emailData);
-  channel.ack(msg);
-});
+await using var consumerClient = new EventHubConsumerClient(
+    EventHubConsumerClient.DefaultConsumerGroupName,
+    connectionString,
+    eventHubName
+);
+
+await foreach (PartitionEvent partitionEvent in consumerClient.ReadEventsAsync())
+{
+    var orderEvent = JsonSerializer.Deserialize<OrderCreatedEvent>(
+        partitionEvent.Data.EventBody.ToArray()
+    );
+    await ReserveInventory(orderEvent.OrderId);
+}
+```
+
+**RabbitMQ (Task Queues) with RabbitMQ.Client:**
+```csharp
+using RabbitMQ.Client;
+
+// Producer
+var factory = new ConnectionFactory { HostName = "localhost" };
+using var connection = factory.CreateConnection();
+using var channel = connection.CreateModel();
+
+channel.QueueDeclare(queue: "email-queue", durable: true, exclusive: false, autoDelete: false);
+
+var emailData = new
+{
+    To = user.Email,
+    Subject = "Welcome!",
+    Body = "Thank you for signing up"
+};
+
+var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(emailData));
+channel.BasicPublish(exchange: "", routingKey: "email-queue", basicProperties: null, body: body);
+
+// Consumer
+var factory = new ConnectionFactory { HostName = "localhost" };
+using var connection = factory.CreateConnection();
+using var channel = connection.CreateModel();
+
+channel.QueueDeclare(queue: "email-queue", durable: true, exclusive: false, autoDelete: false);
+
+var consumer = new EventingBasicConsumer(channel);
+consumer.Received += async (model, ea) =>
+{
+    var body = ea.Body.ToArray();
+    var emailData = JsonSerializer.Deserialize<EmailData>(Encoding.UTF8.GetString(body));
+    await SendEmail(emailData);
+    channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+};
+
+channel.BasicConsume(queue: "email-queue", autoAck: false, consumer: consumer);
+```
+
+**Azure Service Bus:**
+```csharp
+using Azure.Messaging.ServiceBus;
+
+// Producer
+await using var client = new ServiceBusClient(connectionString);
+await using var sender = client.CreateSender("email-queue");
+
+var message = new ServiceBusMessage(JsonSerializer.Serialize(emailData));
+await sender.SendMessageAsync(message);
+
+// Consumer
+await using var client = new ServiceBusClient(connectionString);
+await using var processor = client.CreateProcessor("email-queue", new ServiceBusProcessorOptions());
+
+processor.ProcessMessageAsync += async args =>
+{
+    var emailData = JsonSerializer.Deserialize<EmailData>(args.Message.Body.ToString());
+    await SendEmail(emailData);
+    await args.CompleteMessageAsync(args.Message);
+};
+
+await processor.StartProcessingAsync();
 ```
 
 ## CQRS (Command Query Responsibility Segregation)
@@ -330,7 +591,9 @@ UpdateOrder                      GetUserOrders
 ┌─────────┐                    ┌─────────┐
 │ Write   │ → Events →         │  Read   │
 │  DB     │    (sync)          │  DB     │
-│(Postgres)                    │(MongoDB)│
+│(SQL     │                    │(SQL     │
+│ Server) │                    │ Server/ │
+│         │                    │ MongoDB)│
 └─────────┘                    └─────────┘
 ```
 
@@ -339,31 +602,94 @@ UpdateOrder                      GetUserOrders
 - Scalable (scale reads independently)
 - Flexible (different DB for reads/writes)
 
-**Implementation:**
-```typescript
+**Implementation with MediatR (CQRS Pattern):**
+```csharp
 // Command (Write)
-class CreateOrderCommand {
-  constructor(public userId: string, public items: OrderItem[]) {}
+public class CreateOrderCommand : IRequest<Guid>
+{
+    public string UserId { get; set; }
+    public List<OrderItem> Items { get; set; }
 }
 
-class CreateOrderHandler {
-  async execute(command: CreateOrderCommand) {
-    const order = await Order.create(command);
-    await eventBus.publish(new OrderCreatedEvent(order));
-    return order.id;
-  }
+public class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Guid>
+{
+    private readonly IOrderRepository _repository;
+    private readonly IMediator _mediator;
+
+    public CreateOrderHandler(IOrderRepository repository, IMediator mediator)
+    {
+        _repository = repository;
+        _mediator = mediator;
+    }
+
+    public async Task<Guid> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
+    {
+        var order = new Order
+        {
+            UserId = request.UserId,
+            Items = request.Items
+        };
+
+        await _repository.AddAsync(order);
+        await _mediator.Publish(new OrderCreatedEvent(order.Id, order.UserId, order.Total));
+        
+        return order.Id;
+    }
 }
 
 // Query (Read)
-class GetOrderQuery {
-  constructor(public orderId: string) {}
+public class GetOrderQuery : IRequest<OrderDto>
+{
+    public Guid OrderId { get; set; }
 }
 
-class GetOrderHandler {
-  async execute(query: GetOrderQuery) {
-    // Read from optimized read model
-    return await OrderReadModel.findById(query.orderId);
-  }
+public class GetOrderHandler : IRequestHandler<GetOrderQuery, OrderDto>
+{
+    private readonly IOrderReadRepository _readRepository;
+
+    public GetOrderHandler(IOrderReadRepository readRepository)
+    {
+        _readRepository = readRepository;
+    }
+
+    public async Task<OrderDto> Handle(GetOrderQuery request, CancellationToken cancellationToken)
+    {
+        // Read from optimized read model (denormalized, indexed)
+        return await _readRepository.GetByIdAsync(request.OrderId);
+    }
+}
+
+// Program.cs - Register MediatR
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly()));
+```
+
+**Using MediatR with ASP.NET Core:**
+```csharp
+// Controller
+[ApiController]
+[Route("api/[controller]")]
+public class OrdersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+
+    public OrdersController(IMediator mediator)
+    {
+        _mediator = mediator;
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<Guid>> CreateOrder(CreateOrderCommand command)
+    {
+        var orderId = await _mediator.Send(command);
+        return Ok(orderId);
+    }
+
+    [HttpGet("{id}")]
+    public async Task<ActionResult<OrderDto>> GetOrder(Guid id)
+    {
+        var order = await _mediator.Send(new GetOrderQuery { OrderId = id });
+        return Ok(order);
+    }
 }
 ```
 
@@ -393,37 +719,251 @@ Users 2M-3M    → Shard 3
 ```
 
 **Hash-Based Sharding:**
-```typescript
-function getShardId(userId: string): number {
-  const hash = crypto.createHash('md5').update(userId).digest('hex');
-  return parseInt(hash.substring(0, 8), 16) % SHARD_COUNT;
-}
+```csharp
+public class ShardingService
+{
+    private readonly Dictionary<int, IDbContext> _shards;
+    private const int SHARD_COUNT = 4;
 
-const shardId = getShardId(userId);
-const db = shards[shardId];
-const user = await db.users.findById(userId);
+    public ShardingService(Dictionary<int, IDbContext> shards)
+    {
+        _shards = shards;
+    }
+
+    private int GetShardId(string userId)
+    {
+        using var md5 = MD5.Create();
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(userId));
+        var hashInt = BitConverter.ToInt32(hash, 0);
+        return Math.Abs(hashInt) % SHARD_COUNT;
+    }
+
+    public async Task<User> GetUserAsync(string userId)
+    {
+        var shardId = GetShardId(userId);
+        var dbContext = _shards[shardId];
+        return await dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+    }
+}
+```
+
+**SQL Server Sharding with Elastic Database Tools:**
+```csharp
+// Using Azure SQL Database Elastic Scale
+var shardMapManager = ShardMapManagerFactory.GetSqlShardMapManager(
+    connectionString,
+    ShardMapManagerLoadPolicy.Lazy
+);
+
+var shardMap = shardMapManager.GetRangeShardMap<int>("UserShardMap");
+var shard = shardMap.GetMappingForKey(userId);
+var connection = shard.OpenConnection();
 ```
 
 ### Caching Layers
 
 ```
 Client
-  → CDN (static assets)
-  → API Gateway Cache (public endpoints)
-  → Application Cache (Redis - user sessions, hot data)
-  → Database Query Cache
-  → Database
+  → CDN (Azure CDN / Cloudflare - static assets)
+  → API Gateway Cache (Azure API Management - public endpoints)
+  → Application Cache (Redis via IDistributedCache - user sessions, hot data)
+  → Memory Cache (IMemoryCache - in-process cache)
+  → Database Query Cache (EF Core Query Cache)
+  → Database (SQL Server with Query Store)
+```
+
+**Implementation with .NET:**
+```csharp
+// Program.cs - Register caching
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost:6379";
+});
+
+builder.Services.AddMemoryCache();
+
+// Using IDistributedCache (Redis)
+public class ProductService
+{
+    private readonly IDistributedCache _cache;
+    private readonly IProductRepository _repository;
+
+    public ProductService(IDistributedCache cache, IProductRepository repository)
+    {
+        _cache = cache;
+        _repository = repository;
+    }
+
+    public async Task<Product> GetProductAsync(int id)
+    {
+        var cacheKey = $"product:{id}";
+        var cached = await _cache.GetStringAsync(cacheKey);
+        
+        if (cached != null)
+        {
+            return JsonSerializer.Deserialize<Product>(cached);
+        }
+
+        var product = await _repository.GetByIdAsync(id);
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(product), new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
+        });
+
+        return product;
+    }
+}
+
+// Using IMemoryCache (in-process)
+public class ProductService
+{
+    private readonly IMemoryCache _cache;
+    private readonly IProductRepository _repository;
+
+    public ProductService(IMemoryCache cache, IProductRepository repository)
+    {
+        _cache = cache;
+        _repository = repository;
+    }
+
+    public async Task<Product> GetProductAsync(int id)
+    {
+        if (!_cache.TryGetValue($"product:{id}", out Product product))
+        {
+            product = await _repository.GetByIdAsync(id);
+            _cache.Set($"product:{id}", product, TimeSpan.FromMinutes(10));
+        }
+        return product;
+    }
+}
+```
+
+## Optimizely-Specific Architecture Patterns
+
+### Optimizely CMS Architecture
+
+**Traditional Optimizely (Monolithic):**
+```
+┌─────────────────────────────────┐
+│   Optimizely CMS Application   │
+│                                 │
+│  ┌──────────┐  ┌─────────────┐ │
+│  │ Content  │  │ Commerce    │ │
+│  │  Blocks  │  │  Products   │ │
+│  └──────────┘  └─────────────┘ │
+│  ┌──────────┐  ┌─────────────┐ │
+│  │  Pages   │  │  Personal-  │ │
+│  │          │  │  ization   │ │
+│  └──────────┘  └─────────────┘ │
+│                                 │
+│     SQL Server Database         │
+└─────────────────────────────────┘
+```
+
+**Headless Optimizely (API-First):**
+```
+Client Apps (React, Vue, Mobile)
+    ↓
+┌─────────────────┐
+│  Optimizely     │  - Content API
+│  Content Cloud  │  - GraphQL API
+│  (Headless)     │  - REST API
+└────────┬────────┘
+         │
+    ┌────┴────┬────────┬────────┐
+    ▼         ▼        ▼        ▼
+  Content  Commerce  Personal-  Search
+  Service  Service   ization    Service
+```
+
+**Optimizely with Microservices:**
+```csharp
+// Optimizely Content Service
+public class ContentService
+{
+    private readonly IContentRepository _contentRepository;
+    
+    public async Task<ContentDto> GetContentAsync(string contentId)
+    {
+        var content = await _contentRepository.GetByIdAsync(contentId);
+        return MapToDto(content);
+    }
+}
+
+// Separate Commerce Service
+public class CommerceService
+{
+    public async Task<ProductDto> GetProductAsync(string productId)
+    {
+        // Independent service, can scale separately
+    }
+}
+```
+
+### Optimizely Content Personalization
+
+```csharp
+// Using Optimizely Content Cloud Personalization
+public class PersonalizedContentService
+{
+    private readonly IContentLoader _contentLoader;
+    private readonly IContentPersonalizationService _personalization;
+
+    public async Task<ContentArea> GetPersonalizedContentAsync(string contentId, VisitorContext visitor)
+    {
+        var content = await _contentLoader.GetAsync<PageData>(contentId);
+        var personalizedBlocks = await _personalization.GetPersonalizedContentAsync(
+            content.ContentArea,
+            visitor
+        );
+        return personalizedBlocks;
+    }
+}
+```
+
+### Optimizely Commerce Integration
+
+```csharp
+// Optimizely Commerce with Event-Driven Architecture
+public class OrderService
+{
+    private readonly IOrderRepository _orderRepository;
+    private readonly IEventPublisher _eventPublisher;
+
+    public async Task<Order> CreateOrderAsync(CreateOrderRequest request)
+    {
+        var order = new Order
+        {
+            OrderNumber = GenerateOrderNumber(),
+            CustomerId = request.CustomerId,
+            Items = request.Items
+        };
+
+        await _orderRepository.AddAsync(order);
+        
+        // Publish event for other services (inventory, shipping, etc.)
+        await _eventPublisher.PublishAsync(new OrderCreatedEvent
+        {
+            OrderId = order.Id,
+            CustomerId = order.CustomerId,
+            Total = order.Total
+        });
+
+        return order;
+    }
+}
 ```
 
 ## Architecture Decision Matrix
 
-| Pattern | When to Use | Complexity | Benefits |
-|---------|-------------|------------|----------|
-| **Monolith** | Small team, MVP, unclear boundaries | Low | Simple, fast development |
-| **Microservices** | Large team, clear domains, need scaling | High | Independent deployment, fault isolation |
-| **Event-Driven** | Async workflows, audit trail needed | Moderate | Decoupling, scalability |
-| **CQRS** | Different read/write patterns | High | Optimized queries, scalability |
-| **Serverless** | Spiky traffic, event-driven | Low | Auto-scaling, pay-per-use |
+| Pattern | When to Use | Complexity | Benefits | .NET/Optimizely Tools |
+|---------|-------------|------------|----------|----------------------|
+| **Monolith** | Small team, MVP, unclear boundaries | Low | Simple, fast development | ASP.NET Core MVC, Optimizely CMS |
+| **Microservices** | Large team, clear domains, need scaling | High | Independent deployment, fault isolation | ASP.NET Core Web API, gRPC, YARP |
+| **Event-Driven** | Async workflows, audit trail needed | Moderate | Decoupling, scalability | Azure Service Bus, RabbitMQ, Kafka |
+| **CQRS** | Different read/write patterns | High | Optimized queries, scalability | MediatR, Entity Framework Core |
+| **Serverless** | Spiky traffic, event-driven | Low | Auto-scaling, pay-per-use | Azure Functions, AWS Lambda (.NET) |
+| **Headless CMS** | Multi-channel, API-first | Moderate | Content reuse, flexibility | Optimizely Content Cloud |
 
 ## Anti-Patterns to Avoid
 
@@ -437,18 +977,45 @@ Client
 
 - [ ] Clear service boundaries (domain-driven design)
 - [ ] Database per service (no shared databases)
-- [ ] API Gateway for client requests
-- [ ] Service discovery configured
-- [ ] Circuit breakers for resilience
-- [ ] Event-driven communication (Kafka/RabbitMQ)
-- [ ] CQRS for read-heavy systems
-- [ ] Distributed tracing (Jaeger/OpenTelemetry)
-- [ ] Health checks for all services
+- [ ] API Gateway for client requests (Ocelot/YARP/Azure APIM)
+- [ ] Service discovery configured (Consul/Steeltoe/Azure Service Discovery)
+- [ ] Circuit breakers for resilience (Polly)
+- [ ] Event-driven communication (Azure Service Bus/RabbitMQ/Kafka)
+- [ ] CQRS for read-heavy systems (MediatR)
+- [ ] Distributed tracing (OpenTelemetry/Application Insights)
+- [ ] Health checks for all services (ASP.NET Core Health Checks)
 - [ ] Horizontal scaling capability
+- [ ] Caching strategy (Redis/IMemoryCache)
+- [ ] Logging and monitoring (Serilog/Application Insights)
+- [ ] Dependency injection configured (built-in DI container)
+- [ ] Async/await for I/O operations
+- [ ] Optimizely-specific: Content personalization configured
+- [ ] Optimizely-specific: Multi-site/multi-language support
 
 ## Resources
 
+### .NET & ASP.NET Core Architecture
+- **.NET Microservices Architecture:** https://learn.microsoft.com/dotnet/architecture/microservices/
+- **ASP.NET Core Architecture:** https://learn.microsoft.com/aspnet/core/fundamentals/
+- **Polly (Resilience Library):** https://github.com/App-vNext/Polly
+- **MediatR (CQRS/Mediator):** https://github.com/jbogard/MediatR
+- **Ocelot API Gateway:** https://github.com/ThreeMammals/Ocelot
+- **YARP (Yet Another Reverse Proxy):** https://microsoft.github.io/reverse-proxy/
+
+### Event-Driven & Messaging
+- **Azure Service Bus:** https://learn.microsoft.com/azure/service-bus-messaging/
+- **RabbitMQ .NET Client:** https://www.rabbitmq.com/dotnet.html
+- **Confluent Kafka .NET:** https://github.com/confluentinc/confluent-kafka-dotnet
+- **MassTransit (Message Bus):** https://masstransit.io/
+
+### Optimizely
+- **Optimizely Documentation:** https://docs.developers.optimizely.com/
+- **Optimizely Content Cloud:** https://www.optimizely.com/products/content-cloud/
+- **Optimizely Developer Portal:** https://world.optimizely.com/
+- **Optimizely Architecture Best Practices:** https://docs.developers.optimizely.com/content-management-system/docs/architecture
+
+### General Architecture Patterns
 - **Microservices Patterns:** https://microservices.io/patterns/
 - **Martin Fowler - Microservices:** https://martinfowler.com/articles/microservices.html
-- **Event-Driven Architecture:** https://aws.amazon.com/event-driven-architecture/
-- **CQRS Pattern:** https://martinfowler.com/bliki/CQRS.html
+- **Event-Driven Architecture:** https://learn.microsoft.com/azure/architecture/guide/architecture-styles/event-driven
+- **CQRS Pattern:** https://learn.microsoft.com/azure/architecture/patterns/cqrs

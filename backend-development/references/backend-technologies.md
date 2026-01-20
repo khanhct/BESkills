@@ -4,7 +4,7 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 
 ## Programming Languages & Frameworks
 
-### C# / .NET Core
+### C# / .NET
 **Market Position:** .NET 8+ adoption surge - cross-platform, high-performance, enterprise-grade
 
 **Best For:**
@@ -19,6 +19,13 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - **Minimal APIs** - Lightweight, fast, perfect for microservices
 - **gRPC** - High-performance RPC framework for microservices
 - **SignalR** - Real-time web functionality (WebSockets, Server-Sent Events)
+
+**Key .NET 8+ Features:**
+- Native AOT (Ahead-of-Time) compilation for smaller deployments
+- Performance improvements (up to 20% faster)
+- Enhanced container support
+- Improved JSON serialization
+- Better observability with OpenTelemetry
 
 **When to Choose:** Enterprise development, cross-platform needs, high performance requirements, Microsoft ecosystem integration
 
@@ -77,8 +84,24 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Commerce integration (Optimizely Commerce)
 - Multi-language and multi-site support
 - Visual page editing
+- GraphQL and REST APIs for headless implementations
+- Content delivery network (CDN) integration
 
-**When to Choose:** CMS requirements, content-driven sites, e-commerce integration, personalization needs, enterprise content management
+**Optimizely Product Suite:**
+- **Optimizely Content Cloud** - Content management and delivery
+- **Optimizely Commerce** - E-commerce platform with B2B/B2C support
+- **Optimizely Web Experimentation** - A/B testing and experimentation
+- **Optimizely Feature Experimentation** - Feature flags and experimentation
+- **Optimizely Data Platform** - Customer data platform
+
+**Technology Stack:**
+- Built on ASP.NET Core and .NET
+- SQL Server database (primary)
+- Redis for caching and session management
+- Supports microservices architecture
+- REST and GraphQL APIs
+
+**When to Choose:** CMS requirements, content-driven sites, e-commerce integration, personalization needs, enterprise content management, headless CMS requirements
 
 ## Databases
 
@@ -183,9 +206,43 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Built-in content management ORM
 - Content types, properties, relationships
 - Versioning and publishing workflows
+- IContentLoader, IContentRepository interfaces
 - Best for: Optimizely CMS applications
 
+**Optimizely Commerce Repository**
+- Commerce-specific data access
+- Product catalogs, pricing, inventory
+- Order management and fulfillment
+- Best for: Optimizely Commerce applications
+
 ## Essential .NET Libraries & Tools
+
+### API Gateway & Service Mesh
+**Ocelot**
+- .NET API Gateway
+- Request routing, authentication, rate limiting
+- Best for: Microservices API gateway, request aggregation
+
+**YARP (Yet Another Reverse Proxy)**
+- High-performance reverse proxy by Microsoft
+- Request routing, load balancing, health checks
+- Best for: Reverse proxy, load balancing, service routing
+
+**Azure API Management**
+- Fully managed API gateway service
+- API versioning, rate limiting, analytics
+- Best for: Azure-hosted APIs, enterprise API management
+
+### Service Discovery
+**Steeltoe**
+- Spring Cloud for .NET
+- Service discovery, configuration management
+- Best for: Cloud-native .NET applications, service mesh integration
+
+**Consul.NET**
+- Service discovery and configuration
+- Health checks, key-value store
+- Best for: On-premises service discovery, distributed configuration
 
 ### CQRS & Mediator Pattern
 **MediatR**
@@ -218,7 +275,7 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Simple, declarative validation
 - Best for: Simple validation scenarios
 
-### HTTP Clients
+### HTTP Clients & Resilience
 **HttpClient / IHttpClientFactory**
 - Built-in HTTP client with factory pattern
 - Handles connection pooling and lifetime
@@ -228,6 +285,11 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Type-safe REST client library
 - Generates HTTP clients from interfaces
 - Best for: Strongly-typed API clients
+
+**Polly**
+- Resilience and transient-fault-handling library
+- Circuit breaker, retry, timeout, bulkhead isolation patterns
+- Best for: Resilient HTTP calls, microservices communication, external API integration
 
 ### Logging & Monitoring
 **Serilog**
@@ -239,6 +301,16 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Azure monitoring and telemetry
 - Performance monitoring, dependency tracking
 - Best for: Azure-hosted applications, production monitoring
+
+**OpenTelemetry**
+- Vendor-neutral observability framework
+- Distributed tracing, metrics, and logging
+- Best for: Multi-cloud deployments, standardized observability
+
+**Seq**
+- Structured log server and analysis tool
+- Real-time log aggregation and search
+- Best for: Centralized logging, log analysis
 
 ### Testing
 **xUnit**
@@ -309,6 +381,11 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - IoT data ingestion
 - Large-scale event processing
 
+**.NET Integration:**
+- **Confluent.Kafka** - Official .NET client for Apache Kafka
+- **Azure.Messaging.EventHubs** - Azure Event Hubs .NET SDK
+- **MassTransit** - Message bus abstraction supporting Kafka
+
 **When to Choose:** Event streaming, high throughput, event replay needed, real-time analytics, IoT scenarios
 
 ### Hangfire / Quartz.NET
@@ -322,6 +399,18 @@ Core technologies, frameworks, databases, and message queues for modern C#/.NET 
 - Best for: Background tasks, scheduled jobs, recurring tasks
 
 **When to Choose:** Background job processing, scheduled tasks, simple queue needs
+
+### MassTransit
+**Best For:** Message bus abstraction and distributed messaging
+
+**Strengths:**
+- Abstraction over multiple message brokers (RabbitMQ, Azure Service Bus, Kafka, Amazon SQS)
+- Saga orchestration support
+- Request/response patterns
+- Retry and error handling
+- Best for: Microservices communication, event-driven architecture, message bus abstraction
+
+**When to Choose:** Need abstraction over message brokers, saga patterns, complex messaging workflows
 
 ## Framework Comparisons
 
@@ -389,6 +478,11 @@ Complex workflows? → Azure Service Bus / RabbitMQ
 8. **Ignoring dependency injection** - Leverage built-in DI container for testability and maintainability
 9. **Over-fetching data** - Use DTOs and projections instead of returning full entities
 10. **Not configuring CORS properly** - Configure CORS middleware correctly for cross-origin requests
+11. **Not using resilience patterns** - Implement circuit breakers (Polly) for external service calls
+12. **Missing health checks** - Use ASP.NET Core health checks for monitoring and load balancer integration
+13. **Not using structured logging** - Use Serilog with structured logging for better observability
+14. **Optimizely-specific: Not using content caching** - Leverage Optimizely's built-in caching for content delivery
+15. **Optimizely-specific: Ignoring content versioning** - Use Optimizely's versioning system for content rollback and audit trails
 
 ## Resources
 
@@ -413,5 +507,18 @@ Complex workflows? → Azure Service Bus / RabbitMQ
 - **StackExchange.Redis:** https://github.com/StackExchange/StackExchange.Redis
 - **Azure Service Bus:** https://learn.microsoft.com/azure/service-bus-messaging/
 - **RabbitMQ .NET Client:** https://www.rabbitmq.com/dotnet.html
+- **Confluent Kafka .NET:** https://github.com/confluentinc/confluent-kafka-dotnet
+- **MassTransit:** https://masstransit.io/
 - **Hangfire:** https://www.hangfire.io/
 - **Quartz.NET:** https://www.quartz-scheduler.net/
+
+### Resilience & API Gateway
+- **Polly:** https://github.com/App-vNext/Polly
+- **Ocelot:** https://github.com/ThreeMammals/Ocelot
+- **YARP:** https://microsoft.github.io/reverse-proxy/
+- **Steeltoe:** https://steeltoe.io/
+
+### Observability
+- **OpenTelemetry .NET:** https://opentelemetry.io/docs/instrumentation/net/
+- **Seq:** https://datalust.co/seq
+- **Application Insights:** https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview
