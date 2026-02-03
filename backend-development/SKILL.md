@@ -37,6 +37,7 @@ See: `references/backend-technologies.md` for detailed comparisons
 **Core Technologies:**
 - `backend-technologies.md` - Languages, frameworks, databases, message queues, ORMs
 - `backend-api-design.md` - REST, GraphQL, gRPC patterns and best practices
+- `backend-project-structure.md` - .NET project structure, .slnx solution format, Directory.Build.props, central package management, SourceLink, version management
 
 **Security & Authentication:**
 - `backend-security.md` - OWASP Top 10 2025, security best practices, input validation
@@ -52,6 +53,7 @@ See: `references/backend-technologies.md` for detailed comparisons
 - `backend-devops.md` - Docker, Kubernetes, deployment strategies, monitoring
 - `backend-debugging.md` - Debugging strategies, profiling, logging, production debugging
 - `backend-mindset.md` - Problem-solving, architectural thinking, collaboration
+
 
 ## Key Best Practices (2025)
 

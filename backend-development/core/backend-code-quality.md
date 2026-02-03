@@ -1395,6 +1395,171 @@ public class OrderService
 }
 ```
 
+## Anti-Patterns to Avoid
+
+### ❌ DON'T: Use mutable DTOs
+
+```csharp
+// BAD: Mutable DTO
+public class CustomerDto
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+}
+
+// GOOD: Immutable record
+public record CustomerDto(string Id, string Name);
+```
+
+### ❌ DON'T: Use classes for value objects
+
+```csharp
+// BAD: Value object as class
+public class OrderId
+{
+    public string Value { get; }
+    public OrderId(string value) => Value = value;
+}
+
+// GOOD: Value object as readonly record struct
+public readonly record struct OrderId(string Value);
+```
+
+### ❌ DON'T: Create deep inheritance hierarchies
+
+```csharp
+// BAD: Deep inheritance
+public abstract class Entity { }
+public abstract class AggregateRoot : Entity { }
+public abstract class Order : AggregateRoot { }
+public class CustomerOrder : Order { }
+
+// GOOD: Flat structure with composition
+public interface IEntity
+{
+    Guid Id { get; }
+}
+
+public record Order(OrderId Id, CustomerId CustomerId, Money Total) : IEntity
+{
+    Guid IEntity.Id => Id.Value;
+}
+```
+
+### ❌ DON'T: Return List<T> when you mean IReadOnlyList<T>
+
+```csharp
+// BAD: Exposes internal list for modification
+public List<Order> GetOrders() => _orders;
+
+// GOOD: Returns read-only view
+public IReadOnlyList<Order> GetOrders() => _orders;
+```
+
+### ❌ DON'T: Use byte[] when ReadOnlySpan<byte> works
+
+```csharp
+// BAD: Allocates array on every call
+public byte[] GetHeader()
+{
+    var header = new byte[64];
+    // Fill header
+    return header;
+}
+
+// GOOD: Zero allocation with Span
+public void GetHeader(Span<byte> destination)
+{
+    if (destination.Length < 64)
+        throw new ArgumentException("Buffer too small");
+
+    // Fill header directly into caller's buffer
+}
+```
+
+### ❌ DON'T: Forget CancellationToken in async methods
+
+```csharp
+// BAD: No cancellation support
+public async Task<Order> GetOrderAsync(OrderId id)
+{
+    return await _repository.GetAsync(id);
+}
+
+// GOOD: Cancellation support
+public async Task<Order> GetOrderAsync(
+    OrderId id,
+    CancellationToken cancellationToken = default)
+{
+    return await _repository.GetAsync(id, cancellationToken);
+}
+```
+
+### ❌ DON'T: Block on async code
+
+```csharp
+// BAD: Deadlock risk!
+public Order GetOrder(OrderId id)
+{
+    return GetOrderAsync(id).Result;
+}
+
+// BAD: Also deadlock risk!
+public Order GetOrder(OrderId id)
+{
+    return GetOrderAsync(id).GetAwaiter().GetResult();
+}
+
+// GOOD: Async all the way
+public async Task<Order> GetOrderAsync(
+    OrderId id,
+    CancellationToken cancellationToken)
+{
+    return await _repository.GetAsync(id, cancellationToken);
+}
+```
+
+### ❌ DON'T: Use exceptions for expected business errors
+
+```csharp
+// BAD: Exception for expected validation failure
+public Order CreateOrder(CreateOrderDto dto)
+{
+    if (dto.Items.Count == 0)
+        throw new ValidationException("Order must have items"); // Exception overhead
+    
+    // ...
+}
+
+// GOOD: Result pattern for expected errors
+public Result<Order, ValidationError> CreateOrder(CreateOrderDto dto)
+{
+    if (dto.Items.Count == 0)
+        return Result<Order, ValidationError>.Failure(
+            new ValidationError("Items", "Order must have items"));
+    
+    // ...
+}
+```
+
+### ❌ DON'T: Use implicit conversions in value objects
+
+```csharp
+// BAD: Implicit conversions defeat type safety
+public readonly record struct UserId(Guid Value)
+{
+    public static implicit operator UserId(Guid value) => new(value);  // NO!
+    public static implicit operator Guid(UserId value) => value.Value; // NO!
+}
+
+// GOOD: Explicit conversions only
+public readonly record struct UserId(Guid Value)
+{
+    public static UserId New() => new(Guid.NewGuid());
+    // No implicit operators - forces explicit conversion
+}
+```
+
 ## Code Quality Checklist (Microsoft Standards)
 
 ### SOLID & Design
@@ -1419,12 +1584,19 @@ public class OrderService
 - [ ] Using statements for resource disposal
 - [ ] LINQ used appropriately (avoid N+1 queries)
 - [ ] Expression-bodied members used where appropriate
-- [ ] Pattern matching used where beneficial
+- [ ] Pattern matching used where beneficial (switch expressions, property patterns)
 - [ ] XML documentation comments for public APIs (`/// <summary>`)
 - [ ] File-scoped namespaces used (C# 10+)
 - [ ] Primary constructors used where appropriate (C# 12+)
-- [ ] Record types used for immutable DTOs and value objects
+- [ ] Record types used for immutable DTOs, messages, and events
+- [ ] `readonly record struct` used for value objects (not classes)
 - [ ] Init-only properties for immutable data structures
+- [ ] `IReadOnlyList<T>` returned instead of `List<T>` from public APIs
+- [ ] `Result<T, TError>` pattern used for expected business errors
+- [ ] Exceptions reserved for exceptional circumstances only
+- [ ] `Span<T>`/`Memory<T>` used for performance-critical code paths
+- [ ] `UnsafeAccessorAttribute` used instead of reflection when accessing private members (.NET 8+)
+- [ ] No implicit conversions in value objects (explicit conversions only)
 
 ### Code Style
 - [ ] Code follows Microsoft C# coding conventions
@@ -1563,6 +1735,240 @@ csharp_style_pattern_matching_over_is_with_cast_check = true:warning
 csharp_style_prefer_switch_expression = true:warning
 ```
 
+## Modern C# Patterns
+
+### Result<T, TError> Pattern for Expected Errors
+
+**Concept:** Use `Result<T, TError>` for expected business errors instead of exceptions. Exceptions should be reserved for exceptional circumstances.
+
+**Result Type Implementation:**
+```csharp
+public readonly struct Result<T, TError>
+{
+    private readonly T? _value;
+    private readonly TError? _error;
+    private readonly bool _isSuccess;
+
+    private Result(T value)
+    {
+        _value = value;
+        _error = default;
+        _isSuccess = true;
+    }
+
+    private Result(TError error)
+    {
+        _value = default;
+        _error = error;
+        _isSuccess = false;
+    }
+
+    public bool IsSuccess => _isSuccess;
+    public bool IsFailure => !_isSuccess;
+
+    public T Value => _isSuccess ? _value! : throw new InvalidOperationException("Cannot access Value on failed Result");
+    public TError Error => _isSuccess ? throw new InvalidOperationException("Cannot access Error on successful Result") : _error!;
+
+    public static Result<T, TError> Success(T value) => new(value);
+    public static Result<T, TError> Failure(TError error) => new(error);
+
+    public Result<TOut, TError> Map<TOut>(Func<T, TOut> mapper) =>
+        _isSuccess ? Result<TOut, TError>.Success(mapper(_value!)) : Result<TOut, TError>.Failure(_error!);
+
+    public async Task<Result<TOut, TError>> MapAsync<TOut>(Func<T, Task<TOut>> mapper) =>
+        _isSuccess ? Result<TOut, TError>.Success(await mapper(_value!)) : Result<TOut, TError>.Failure(_error!);
+}
+```
+
+**Usage Example:**
+```csharp
+public readonly record struct ValidationError(string Field, string Message);
+
+public Result<Order, ValidationError> CreateOrder(CreateOrderDto dto)
+{
+    if (dto.Items.Count == 0)
+        return Result<Order, ValidationError>.Failure(
+            new ValidationError("Items", "Order must have at least one item"));
+
+    if (dto.Total <= 0)
+        return Result<Order, ValidationError>.Failure(
+            new ValidationError("Total", "Order total must be greater than zero"));
+
+    var order = new Order
+    {
+        Id = Guid.NewGuid(),
+        Items = dto.Items,
+        Total = dto.Total
+    };
+
+    return Result<Order, ValidationError>.Success(order);
+}
+
+// Usage
+var result = CreateOrder(dto);
+if (result.IsFailure)
+{
+    return BadRequest(new { error = result.Error.Message });
+}
+
+var order = result.Value;
+```
+
+**When to Use Result vs Exceptions:**
+
+| Scenario | Use |
+|----------|-----|
+| Expected business errors (validation, not found) | `Result<T, TError>` |
+| Unexpected errors (network failure, null reference) | Exceptions |
+| Domain validation failures | `Result<T, TError>` |
+| System/infrastructure failures | Exceptions |
+
+### Span<T> and Memory<T> for Zero-Allocation Patterns
+
+**Concept:** Use `Span<T>` and `Memory<T>` for performance-critical code to avoid allocations and reduce GC pressure.
+
+**When to Use:**
+- High-throughput scenarios (parsing, serialization, networking)
+- Working with binary data or buffers
+- String manipulation in hot paths
+- Array pooling scenarios
+
+**Span<T> Examples:**
+
+```csharp
+// Zero-allocation string parsing
+public bool TryParseOrderId(ReadOnlySpan<char> input, out OrderId orderId)
+{
+    if (Guid.TryParse(input, out var guid))
+    {
+        orderId = new OrderId(guid);
+        return true;
+    }
+
+    orderId = default;
+    return false;
+}
+
+// Usage
+var input = "12345678-1234-1234-1234-123456789012".AsSpan();
+if (TryParseOrderId(input, out var orderId))
+{
+    // Process order
+}
+```
+
+**Memory<T> for Async Scenarios:**
+
+```csharp
+public async Task ProcessBufferAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+{
+    // Memory<T> can be stored and passed across async boundaries
+    // Span<T> cannot (stack-only)
+    
+    await ProcessChunkAsync(buffer.Slice(0, buffer.Length / 2), cancellationToken);
+    await ProcessChunkAsync(buffer.Slice(buffer.Length / 2), cancellationToken);
+}
+```
+
+**ArrayPool<T> for Large Allocations:**
+
+```csharp
+public void ProcessLargeData(ReadOnlySpan<byte> input)
+{
+    var pool = ArrayPool<byte>.Shared;
+    var buffer = pool.Rent(input.Length);
+    
+    try
+    {
+        input.CopyTo(buffer);
+        // Process buffer
+    }
+    finally
+    {
+        pool.Return(buffer);
+    }
+}
+```
+
+**StringBuilder with Span<T>:**
+
+```csharp
+public string FormatOrderId(OrderId id)
+{
+    var span = stackalloc char[36]; // GUID string length
+    if (id.Value.TryFormat(span, out var written))
+    {
+        return new string(span[..written]);
+    }
+    
+    return id.Value.ToString(); // Fallback
+}
+```
+
+**When NOT to Use Span<T>/Memory<T>:**
+- Simple scenarios where performance isn't critical
+- Code that needs to store references across async boundaries (use `Memory<T>` instead)
+- When working with existing APIs that don't support spans
+
+### UnsafeAccessorAttribute (.NET 8+)
+
+**Concept:** When you genuinely need to access private or internal members (serializers, test helpers, framework code), use `UnsafeAccessorAttribute` instead of traditional reflection. It provides **zero-overhead, AOT-compatible** member access.
+
+**Why UnsafeAccessor over Reflection:**
+
+| Aspect | Reflection | UnsafeAccessor |
+|--------|------------|----------------|
+| Performance | Slow (100-1000x) | Zero overhead |
+| AOT compatible | No | Yes |
+| Allocations | Yes (boxing, arrays) | None |
+| Compile-time checked | No | Partially (signature) |
+
+**Private Field Access:**
+```csharp
+// AVOID: Traditional reflection - slow, allocates, breaks AOT
+var field = typeof(Order).GetField("_status", BindingFlags.NonPublic | BindingFlags.Instance);
+var status = (OrderStatus)field!.GetValue(order)!;
+
+// PREFER: UnsafeAccessor - zero overhead, AOT-compatible
+[UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_status")]
+static extern ref OrderStatus GetStatusField(Order order);
+
+var status = GetStatusField(order);  // Direct access, no reflection
+```
+
+**Private Method Access:**
+```csharp
+[UnsafeAccessor(UnsafeAccessorKind.Method, Name = "Recalculate")]
+static extern void CallRecalculate(Order order);
+
+CallRecalculate(order);
+```
+
+**Private Static Field:**
+```csharp
+[UnsafeAccessor(UnsafeAccessorKind.StaticField, Name = "_instanceCount")]
+static extern ref int GetInstanceCount(Order order);
+
+var count = GetInstanceCount(order);
+```
+
+**Private Constructor:**
+```csharp
+[UnsafeAccessor(UnsafeAccessorKind.Constructor)]
+static extern Order CreateOrder(OrderId id, CustomerId customerId);
+
+var order = CreateOrder(orderId, customerId);
+```
+
+**Use Cases:**
+- Serializers accessing private backing fields
+- Test helpers verifying internal state
+- Framework code that needs to bypass visibility
+
+**Resources:**
+- [A new way of doing reflection with .NET 8](https://steven-giesel.com/blogPost/05ecdd16-8dc4-490f-b1cf-780c994346a4)
+- [Accessing private members without reflection in .NET 8.0](https://www.strathweb.com/2023/10/accessing-private-members-without-reflection-in-net-8-0/)
+
 ## Modern C# Features (2025)
 
 ### File-Scoped Namespaces (C# 10+)
@@ -1622,20 +2028,15 @@ public class UserService(
 }
 ```
 
-### Record Types for DTOs
+### Records for Immutable Data (C# 9+)
 
-**Microsoft Recommendation:** Use records for immutable data transfer objects
+**Microsoft Recommendation:** Use `record` types for DTOs, messages, events, and domain entities.
 
-**Before:**
-```csharp
-public class CreateUserDto
-{
-    public string Email { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-}
-```
+**When to use `record class` vs `record struct`:**
+- `record class` (default): Reference types, use for entities, aggregates, DTOs with multiple properties
+- `record struct`: Value types, use for value objects (see Value Objects section)
 
-**After (Record):**
+**Simple Immutable DTO:**
 ```csharp
 /// <summary>
 /// Data transfer object for creating a new user.
@@ -1645,8 +2046,45 @@ public class CreateUserDto
 public record CreateUserDto(
     string Email,
     string Name);
+```
 
-// Or with init-only properties for optional fields
+**Record with Validation in Constructor:**
+```csharp
+public record EmailAddress
+{
+    public string Value { get; init; }
+
+    public EmailAddress(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !value.Contains('@'))
+            throw new ArgumentException("Invalid email address", nameof(value));
+
+        Value = value;
+    }
+}
+```
+
+**Record with Computed Properties:**
+```csharp
+public record Order(string Id, decimal Subtotal, decimal Tax)
+{
+    public decimal Total => Subtotal + Tax;
+}
+```
+
+**Records with Collections - Use IReadOnlyList:**
+```csharp
+public record ShoppingCart(
+    string CartId,
+    string CustomerId,
+    IReadOnlyList<CartItem> Items)
+{
+    public decimal Total => Items.Sum(item => item.Price * item.Quantity);
+}
+```
+
+**Record with Init-Only Properties for Optional Fields:**
+```csharp
 public record UpdateUserDto
 {
     public string? Email { get; init; }
@@ -1654,31 +2092,200 @@ public record UpdateUserDto
 }
 ```
 
-### Pattern Matching Enhancements
-
-**Microsoft Recommendation:** Use pattern matching for cleaner conditional logic
-
-**Before:**
+**Domain Events as Records:**
 ```csharp
-if (user != null && user.IsActive && user.EmailConfirmed)
+public record UserCreatedEvent(Guid UserId, string Email, DateTime CreatedAt) : INotification;
+```
+
+### Value Objects as readonly record struct
+
+**CRITICAL:** Value objects should **always be `readonly record struct`** for performance and value semantics.
+
+**Why `readonly record struct` for value objects:**
+- **Value semantics**: Equality based on content, not reference
+- **Stack allocation**: Better performance, no GC pressure
+- **Immutability**: `readonly` prevents accidental mutation
+- **Pattern matching**: Works seamlessly with switch expressions
+
+**Single-Value Object:**
+```csharp
+public readonly record struct OrderId(string Value)
 {
-    // ...
+    public OrderId(string value) : this(
+        !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new ArgumentException("OrderId cannot be empty", nameof(value)))
+    {
+    }
+
+    public override string ToString() => Value;
+
+    // NO implicit conversions - defeats type safety!
+    // Access inner value explicitly: orderId.Value
 }
 ```
 
-**After (Pattern Matching):**
+**Multi-Value Object:**
+```csharp
+public readonly record struct Money(decimal Amount, string Currency)
+{
+    public Money(decimal amount, string currency) : this(
+        amount >= 0 ? amount : throw new ArgumentException("Amount cannot be negative", nameof(amount)),
+        ValidateCurrency(currency))
+    {
+    }
+
+    private static string ValidateCurrency(string currency)
+    {
+        if (string.IsNullOrWhiteSpace(currency) || currency.Length != 3)
+            throw new ArgumentException("Currency must be a 3-letter code", nameof(currency));
+        return currency.ToUpperInvariant();
+    }
+
+    public Money Add(Money other)
+    {
+        if (Currency != other.Currency)
+            throw new InvalidOperationException($"Cannot add {Currency} to {other.Currency}");
+
+        return new Money(Amount + other.Amount, Currency);
+    }
+
+    public override string ToString() => $"{Amount:N2} {Currency}";
+}
+```
+
+**Complex Value Object with Factory Pattern:**
+```csharp
+public readonly record struct PhoneNumber
+{
+    public string Value { get; }
+
+    private PhoneNumber(string value) => Value = value;
+
+    public static Result<PhoneNumber, string> Create(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return Result<PhoneNumber, string>.Failure("Phone number cannot be empty");
+
+        // Normalize: remove all non-digits
+        var digits = new string(input.Where(char.IsDigit).ToArray());
+
+        if (digits.Length < 10 || digits.Length > 15)
+            return Result<PhoneNumber, string>.Failure("Phone number must be 10-15 digits");
+
+        return Result<PhoneNumber, string>.Success(new PhoneNumber(digits));
+    }
+
+    public override string ToString() => Value;
+}
+```
+
+**Strongly-Typed ID:**
+```csharp
+public readonly record struct CustomerId(Guid Value)
+{
+    public static CustomerId New() => new(Guid.NewGuid());
+    public override string ToString() => Value.ToString();
+}
+```
+
+**CRITICAL: NO implicit conversions.** Implicit operators defeat the purpose of value objects by allowing silent type coercion:
+
+```csharp
+// WRONG - defeats compile-time safety:
+public readonly record struct UserId(Guid Value)
+{
+    public static implicit operator UserId(Guid value) => new(value);  // NO!
+    public static implicit operator Guid(UserId value) => value.Value; // NO!
+}
+
+// With implicit operators, this compiles silently:
+void ProcessUser(UserId userId) { }
+ProcessUser(Guid.NewGuid());  // Oops - meant to pass PostId
+
+// CORRECT - all conversions explicit:
+public readonly record struct UserId(Guid Value)
+{
+    public static UserId New() => new(Guid.NewGuid());
+    // No implicit operators
+    // Create: new UserId(guid) or UserId.New()
+    // Extract: userId.Value
+}
+```
+
+Explicit conversions force every boundary crossing to be visible:
+
+```csharp
+// API boundary - explicit conversion IN
+var userId = new UserId(request.UserId);  // Validates on entry
+
+// Database boundary - explicit conversion OUT
+await _db.ExecuteAsync(sql, new { UserId = userId.Value });
+```
+
+### Pattern Matching (C# 8-12)
+
+**Microsoft Recommendation:** Leverage modern pattern matching for cleaner, more expressive code.
+
+**Property Patterns:**
 ```csharp
 if (user is { IsActive: true, EmailConfirmed: true })
 {
     // ...
 }
+```
 
-// Switch expressions
-var status = user switch
+**Switch Expressions with Value Objects:**
+```csharp
+public string GetPaymentMethodDescription(PaymentMethod payment) => payment switch
 {
-    { IsActive: true, EmailConfirmed: true } => "Active",
-    { IsActive: true, EmailConfirmed: false } => "Pending",
-    _ => "Inactive"
+    { Type: PaymentType.CreditCard, Last4: var last4 } => $"Credit card ending in {last4}",
+    { Type: PaymentType.BankTransfer, AccountNumber: var account } => $"Bank transfer from {account}",
+    { Type: PaymentType.Cash } => "Cash payment",
+    _ => "Unknown payment method"
+};
+```
+
+**Relational and Logical Patterns:**
+```csharp
+public decimal CalculateDiscount(Order order) => order switch
+{
+    { Total: > 1000m } => order.Total * 0.15m,
+    { Total: > 500m } => order.Total * 0.10m,
+    { Total: > 100m } => order.Total * 0.05m,
+    _ => 0m
+};
+```
+
+**Type Patterns:**
+```csharp
+public string ProcessPayment(object payment) => payment switch
+{
+    CreditCardPayment card => $"Processing card ending in {card.Last4}",
+    BankTransferPayment transfer => $"Processing transfer to {transfer.AccountNumber}",
+    CashPayment => "Processing cash payment",
+    null => throw new ArgumentNullException(nameof(payment)),
+    _ => throw new ArgumentException($"Unknown payment type: {payment.GetType()}", nameof(payment))
+};
+```
+
+**Tuple Patterns:**
+```csharp
+public string GetStatus((bool IsActive, bool IsVerified) user) => user switch
+{
+    (true, true) => "Active",
+    (true, false) => "Pending",
+    (false, _) => "Inactive"
+};
+```
+
+**List Patterns (C# 11+):**
+```csharp
+public string GetFirstItem(List<string> items) => items switch
+{
+    [] => "Empty",
+    [var first] => first,
+    [var first, ..] => $"First: {first}, Total: {items.Count}"
 };
 ```
 
@@ -1816,6 +2423,39 @@ public class OptimizelyContentRepository : IContentRepository
 }
 ```
 
+## Best Practices Summary
+
+### DO's ✅
+- Use `record` for DTOs, messages, events, and domain entities
+- Use `readonly record struct` for value objects
+- Leverage pattern matching with `switch` expressions
+- Enable and respect nullable reference types
+- Use async/await for all I/O operations
+- Accept `CancellationToken` in all async methods
+- Use `Span<T>` and `Memory<T>` for high-performance scenarios
+- Accept abstractions (`IEnumerable<T>`, `IReadOnlyList<T>`)
+- Return appropriate interfaces or concrete types
+- Use `Result<T, TError>` for expected errors
+- Use `ConfigureAwait(false)` in library code
+- Pool buffers with `ArrayPool<T>` for large allocations
+- Prefer composition over inheritance
+- Avoid abstract base classes in application code
+- Use `UnsafeAccessorAttribute` instead of reflection when accessing private members (.NET 8+)
+
+### DON'Ts ❌
+- Don't use mutable classes when records work
+- Don't use classes for value objects (use `readonly record struct`)
+- Don't create deep inheritance hierarchies
+- Don't ignore nullable reference type warnings
+- Don't block on async code (`.Result`, `.Wait()`)
+- Don't use `byte[]` when `Span<byte>` suffices
+- Don't forget `CancellationToken` parameters
+- Don't return mutable collections from APIs
+- Don't throw exceptions for expected business errors
+- Don't use `string` concatenation in loops
+- Don't allocate large arrays repeatedly (use `ArrayPool`)
+- Don't use implicit conversions in value objects
+
 ## Resources
 
 ### Microsoft Documentation
@@ -1823,6 +2463,9 @@ public class OptimizelyContentRepository : IContentRepository
 - **Framework Design Guidelines:** https://learn.microsoft.com/dotnet/standard/design-guidelines/
 - **Async Best Practices:** https://learn.microsoft.com/dotnet/csharp/asynchronous-programming/async-scenarios
 - **Exception Handling:** https://learn.microsoft.com/dotnet/csharp/fundamentals/exceptions/
+- **Pattern Matching:** https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/functional/pattern-matching
+- **Span<T> and Memory<T>:** https://learn.microsoft.com/dotnet/standard/memory-and-spans/
+- **Modern C# Coding Standards:** https://github.com/Aaronontheweb/dotnet-skills/blob/master/skills/csharp/coding-standards/SKILL.md
 
 ### Books & Patterns
 - **Clean Code (Book):** Robert C. Martin
