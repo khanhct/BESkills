@@ -61,9 +61,27 @@ Credentials are stored in a JSON file with restrictive permissions (0o600). **Do
 
 ## Cursor MCP configuration
 
-Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project):
+Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project).
 
-**Option A — uv (recommended):**
+**Option A — SSE (recommended for Cursor):** Run the server manually with SSE, then point Cursor at the URL.
+
+1. Start the server:
+   ```bash
+   uv run python server.py --transport sse --host 127.0.0.1 --port 8080
+   ```
+2. In `mcp.json`:
+   ```json
+   {
+     "mcpServers": {
+       "pr-comment": {
+         "url": "http://127.0.0.1:8080/sse"
+       }
+     }
+   }
+   ```
+   Use the same host/port as in the run command. Restart Cursor after changing config.
+
+**Option B — stdio with uv:**
 
 ```json
 {
@@ -78,7 +96,7 @@ Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project
 }
 ```
 
-**Option B — system Python** (install deps first with `uv sync` or `pip install -e .`):
+**Option C — stdio with system Python** (install deps first with `uv sync` or `pip install -e .`):
 
 ```json
 {
