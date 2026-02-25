@@ -5,7 +5,7 @@ Tools:
 - pr_comment_add_token: Store a PAT/token for a provider and org (optional project).
 - pr_comment_post: Post a JSON array of comment threads to a PR (pr-comment-format.md).
 
-Multi-user: pass user_id, or set X-User-Id header (SSE/HTTP), or USER_ID env (stdio). Else 'default'.
+Multi-user: user identity is required. Pass user_id, or set X-User-Id header (SSE/HTTP), or USER_ID env (stdio). Returns an error if none is set.
 """
 import argparse
 import asyncio
@@ -33,18 +33,26 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
-    instructions="Post PR review comments to Azure DevOps (and later GitHub, AWS). Use add_token to store a PAT. Multi-user: pass user_id, or X-User-Id header (SSE/HTTP), or USER_ID env (stdio), then post_pr_comments to post comment threads.",
+    instructions="Post PR review comments to Azure DevOps (and later GitHub, AWS). Use add_token to store a PAT. User identity required: pass user_id, or set X-User-Id header (SSE/HTTP), or USER_ID env (stdio). Then post_pr_comments to post comment threads.",
 )
 
 
-def _effective_user_id(user_id: str | None) -> str:
-    """Resolve user_id: explicit arg, else X-User-Id header (SSE/HTTP), else USER_ID env, else 'default'."""
+USER_ID_REQUIRED_MSG = (
+    "User identity required. Set X-User-Id header (SSE/HTTP), USER_ID environment variable, or pass user_id in the request."
+)
+
+
+def _effective_user_id(user_id: str | None) -> str | None:
+    """Resolve user_id: explicit arg, else X-User-Id header (SSE/HTTP), else USER_ID env. Returns None if none is set."""
     if user_id and str(user_id).strip():
         return str(user_id).strip()
     from_header = _current_user_id_from_header.get()
     if from_header and str(from_header).strip():
         return str(from_header).strip()
-    return os.environ.get("USER_ID", "default")
+    env_user = os.environ.get("USER_ID")
+    if env_user and str(env_user).strip():
+        return str(env_user).strip()
+    return None
 
 
 class XUserIdMiddleware(BaseHTTPMiddleware):
@@ -62,14 +70,14 @@ class XUserIdMiddleware(BaseHTTPMiddleware):
 
 @mcp.tool(
     name="add_token",
-    description="Store a PAT/token for a provider and organization. Optional project for Azure DevOps; optional user_id for multi-user (else X-User-Id header or USER_ID env or 'default'). Supported providers: azure_devops, github, aws.",
+    description="Store a PAT/token for a provider and organization. Optional project for Azure DevOps; optional user_id for multi-user (else X-User-Id header or USER_ID env required). Supported providers: azure_devops, github, aws.",
 )
 def add_token(
     provider: str,  # The provider to store the token for (e.g., 'azure_devops', 'github', 'aws'). Case-sensitive.
     org: str,       # The organization or account name. For Azure DevOps, this is the organization.
     token: str,     # The personal access token (PAT) or secret to store.
     project: str | None = None,  # (Optional) The project within the organization. Required for some providers like Azure DevOps.
-    user_id: str | None = None,  # (Optional) User identifier to scope the token. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is used, else 'default'.
+    user_id: str | None = None,  # (Optional) User identifier to scope the token. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is required.
 ) -> str:
     """
     Add or update token for the given provider, org, and optional project and user_id.
@@ -79,20 +87,21 @@ def add_token(
         org (str): The organization or account name for which the token is stored.
         token (str): The personal access token (PAT) or authentication token value.
         project (str, optional): The project within the organization. This is required for Azure DevOps, but optional/ignored for other providers.
-        user_id (str, optional): User identifier for multi-user isolation. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env or 'default'.
+        user_id (str, optional): User identifier for multi-user isolation. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env (required if omitted).
 
     Returns:
         str: A result message indicating success or details of any error encountered.
     """
     try:
         effective_user = _effective_user_id(user_id)
+        if effective_user is None:
+            return USER_ID_REQUIRED_MSG
         token_store.set_token(provider, org, token, project, user_id=effective_user)
         parts = [provider, org]
         if project:
             parts.append(project)
         msg = "Token stored for " + " / ".join(parts)
-        if effective_user != "default":
-            msg += f" (user: {effective_user})"
+        msg += f" (user: {effective_user})"
         return msg + "."
     except ValueError as e:
         return str(e)
@@ -102,7 +111,7 @@ def add_token(
 
 @mcp.tool(
     name="post_pr_comments",
-    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure), repository, pull_request_id, comments_body. Optional user_id (else X-User-Id header or USER_ID env or 'default').",
+    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure), repository, pull_request_id, comments_body. Optional user_id (else X-User-Id header or USER_ID env required).",
 )
 def post_pr_comments(
     provider: str,      # The provider to use for posting comments (e.g., 'azure_devops'). Case-sensitive.
@@ -111,7 +120,7 @@ def post_pr_comments(
     repository: str,    # The name or identifier of the repository to post comments to.
     pull_request_id: int,   # The numeric ID of the pull request to comment on.
     comments_body: str,     # JSON string: array of thread objects as described in pr-comment-format.md; each includes comments and location.
-    user_id: str | None = None,  # (Optional) User identifier whose token to use. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is used, else 'default'.
+    user_id: str | None = None,  # (Optional) User identifier whose token to use. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is required.
 ) -> str:
     """
     Post PR comments to the given repository and pull request.
@@ -123,7 +132,7 @@ def post_pr_comments(
         repository (str): The target repository name or identifier for the pull request.
         pull_request_id (int): The numeric ID of the pull request to post comments on.
         comments_body (str): JSON string representing an array of comment thread objects (see pr-comment-format.md for format).
-        user_id (str, optional): User identifier for token lookup. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env or 'default'.
+        user_id (str, optional): User identifier for token lookup. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env (required if omitted).
 
     Returns:
         str: A summary of created threads and any errors encountered.
@@ -131,6 +140,8 @@ def post_pr_comments(
     if provider != "azure_devops":
         return f"Provider '{provider}' is not implemented yet. Use azure_devops."
     effective_user = _effective_user_id(user_id)
+    if effective_user is None:
+        return USER_ID_REQUIRED_MSG
     token = token_store.get_token(provider, org, project, user_id=effective_user)
     if not token:
         # Try org-level token without project
