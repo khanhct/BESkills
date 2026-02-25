@@ -34,6 +34,23 @@ Follow this order so high-impact issues are caught first:
 
 **Conditional focus:** If the user specifies a focus (e.g. "security only", "performance"), prioritize that area and still note critical issues in others briefly.
 
+## Evaluation Criteria
+
+For each truly changed file and each diffed hunk, evaluate the changes in the context of the existing codebase. Understand how the modified code interacts with surrounding logic and related files—such as how input variables are derived, how return values are consumed, and whether the change introduces side effects or breaks assumptions elsewhere. Assess each change against the following principles:
+
+- **Design & Architecture**: Verify the change fits your system's architectural patterns, avoids unnecessary coupling or speculative features, enforces clear separation of concerns, and aligns with defined module boundaries.
+- **Complexity & Maintainability**: Ensure control flow remains flat, cyclomatic complexity stays low, duplicate logic is abstracted (DRY), dead or unreachable code is removed, and any dense logic is refactored into testable helper methods.
+- **Functionality & Correctness**: Confirm new code paths behave correctly under valid and invalid inputs, cover all edge cases, maintain idempotency for retry-safe operations, satisfy all functional requirements or user stories, and include robust error-handling semantics.
+- **Readability & Naming**: Check that identifiers clearly convey intent, comments explain *why* (not *what*), code blocks are logically ordered, and no surprising side-effects hide behind deceptively simple names.
+- **Best Practices & Patterns**: Validate use of language- or framework-specific idioms, adherence to SOLID principles, proper resource cleanup, consistent logging/tracing, and clear separation of responsibilities across layers.
+- **Test Coverage & Quality**: Verify unit tests for both success and failure paths, integration tests exercising end-to-end flows, appropriate use of mocks/stubs, meaningful assertions (including edge-case inputs), and that test names accurately describe behavior.
+- **Standardization & Style**: Ensure conformance to style guides (indentation, import/order, naming conventions), consistent project structure (folder/file placement), and zero new linter or formatter warnings.
+- **Documentation & Comments**: Confirm public APIs or complex algorithms have clear in-code documentation, and that README, Swagger/OpenAPI, CHANGELOG, or other user-facing docs are updated to reflect visible changes or configuration tweaks.
+- **Security & Compliance**: Check input validation and sanitization against injection attacks, proper output encoding, secure error handling, dependency license and vulnerability checks, secrets management best practices, enforcement of authZ/authN, and relevant regulatory compliance (e.g. GDPR, HIPAA).
+- **Performance & Scalability**: Identify N+1 query patterns or inefficient I/O (streaming vs. buffering), memory management concerns, heavy hot-path computations, or unnecessary UI re-renders; suggest caching, batching, memoization, async patterns, or algorithmic optimizations.
+- **Observability & Logging**: Verify that key events emit metrics or tracing spans, logs use appropriate levels, sensitive data is redacted, and contextual information is included to support monitoring, alerting, and post-mortem debugging.
+- **Accessibility & Internationalization**: For UI code, ensure use of semantic HTML, correct ARIA attributes, keyboard navigability, color-contrast considerations, and that all user-facing strings are externalized for localization.
+
 ## Output
 
 The **only** output of a code review is a **comments JSON file**. Write it to a single file (e.g. `pr-review-comments.json`) whose root is an **array** of thread objects. If there are any comments, include them as thread objects; if there are none, write an empty array `[]`. Do not produce a markdown report or any other output format. Full schema and examples: [references/pr-comment-format.md](references/pr-comment-format.md).
