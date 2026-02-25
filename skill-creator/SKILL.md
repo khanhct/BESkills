@@ -1,237 +1,616 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
-license: Complete terms in LICENSE.txt
+description: Guide for creating effective skills for AI coding agents working with Azure SDKs and Microsoft Foundry services. Use when creating new skills or updating existing skills.
 ---
 
 # Skill Creator
 
-This skill provides guidance for creating effective skills.
+Guide for creating skills that extend AI agent capabilities, with emphasis on Azure SDKs and Microsoft Foundry.
+
+> **Required Context:** When creating SDK or API skills, users MUST provide the SDK package name, documentation URL, or repository reference for the skill to be based on.
 
 ## About Skills
 
-Skills are modular, self-contained packages that extend Claude's capabilities by providing
-specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform Claude from a general-purpose agent into a specialized agent
-equipped with procedural knowledge that no model can fully possess.
+Skills are modular knowledge packages that transform general-purpose agents into specialized experts:
 
-### What Skills Provide
+1. **Procedural knowledge** — Multi-step workflows for specific domains
+2. **SDK expertise** — API patterns, authentication, error handling for Azure services
+3. **Domain context** — Schemas, business logic, company-specific patterns
+4. **Bundled resources** — Scripts, references, templates for complex tasks
 
-1. Specialized workflows - Multi-step procedures for specific domains
-2. Tool integrations - Instructions for working with specific file formats or APIs
-3. Domain expertise - Company-specific knowledge, schemas, business logic
-4. Bundled resources - Scripts, references, and assets for complex and repetitive tasks
+---
 
-### Anatomy of a Skill
+## Core Principles
 
-Every skill consists of a required SKILL.md file and optional bundled resources:
+### 1. Concise is Key
+
+The context window is a shared resource. Challenge each piece: "Does this justify its token cost?"
+
+**Default assumption: Agents are already capable.** Only add what they don't already know.
+
+### 2. Fresh Documentation First
+
+**Azure SDKs change constantly.** Skills should instruct agents to verify documentation:
+
+```markdown
+## Before Implementation
+
+Search `microsoft-docs` MCP for current API patterns:
+- Query: "[SDK name] [operation] python"
+- Verify: Parameters match your installed SDK version
+```
+
+### 3. Degrees of Freedom
+
+Match specificity to task fragility:
+
+| Freedom | When | Example |
+|---------|------|---------|
+| **High** | Multiple valid approaches | Text guidelines |
+| **Medium** | Preferred pattern with variation | Pseudocode |
+| **Low** | Must be exact | Specific scripts |
+
+### 4. Progressive Disclosure
+
+Skills load in three levels:
+
+1. **Metadata** (~100 words) — Always in context
+2. **SKILL.md body** (<5k words) — When skill triggers
+3. **References** (unlimited) — As needed
+
+**Keep SKILL.md under 500 lines.** Split into reference files when approaching this limit.
+
+---
+
+## Skill Structure
 
 ```
 skill-name/
 ├── SKILL.md (required)
-│   ├── YAML frontmatter metadata (required)
-│   │   ├── name: (required)
-│   │   └── description: (required)
-│   └── Markdown instructions (required)
+│   ├── YAML frontmatter (name, description)
+│   └── Markdown instructions
 └── Bundled Resources (optional)
-    ├── scripts/          - Executable code (Python/Bash/etc.)
-    ├── references/       - Documentation intended to be loaded into context as needed
-    └── assets/           - Files used in output (templates, icons, fonts, etc.)
+    ├── scripts/      — Executable code
+    ├── references/   — Documentation loaded as needed
+    └── assets/       — Output resources (templates, images)
 ```
 
-#### Requirements (important)
+### SKILL.md
 
-- Skill should be combined into specific topics, for example: `cloudflare`, `cloudflare-r2`, `cloudflare-workers`, `docker`, `gcloud` should be combined into `devops`
-- `SKILL.md` should be **less than 200 lines** and include the references of related markdown files and scripts.
-- Each script or referenced markdown file should be also **less than 200 lines**, remember that you can always split them into multiple files (**progressive disclosure** principle).
-- Descriptions in metadata of `SKILL.md` files should be both concise and still contains enough usecases of the references and scripts, this will help skills can be activated automatically during the implementation process of Claude Code.
-- **Referenced markdowns**:
-  - Sacrifice grammar for the sake of concision when writing these files.
-  - Can reference other markdown files or scripts as well.
-- **Referenced scripts**:
-  - Prefer nodejs or python scripts instead of bash script, because bash scripts are not well-supported on Windows.
-  - If you're going to write python scripts, make sure you have `requirements.txt`
-  - Make sure scripts respect `.env` file follow this order: `process.env` > `.claude/skills/${SKILL}/.env` > `.claude/skills/.env` > `.claude/.env` 
-  - Create `.env.example` file to show the required environment variables.
-  - Always write tests for these scripts.
+- **Frontmatter**: `name` and `description`. The description is the trigger mechanism.
+- **Body**: Instructions loaded only after triggering.
 
-**Why?**
-Better **context engineering**: inspired from **progressive disclosure** technique of Agent Skills, when agent skills are activated, Claude Code will consider to load only relevant files into the context, instead of reading all long `SKILL.md` as before.
+### Bundled Resources
 
-#### SKILL.md (required)
+| Type | Purpose | When to Include |
+|------|---------|-----------------|
+| `scripts/` | Deterministic operations | Same code rewritten repeatedly |
+| `references/` | Detailed patterns | API docs, schemas, detailed guides |
+| `assets/` | Output resources | Templates, images, boilerplate |
 
-**File name:** `SKILL.md` (uppercase)
-**File size:** Under 200 lines, if you need more, plit it to multiple files in `references` folder.
+**Don't include**: README.md, CHANGELOG.md, installation guides.
 
-**Metadata Quality:** The `name` and `description` in YAML frontmatter determine when Claude will use the skill. Be specific about what the skill does and when to use it. Use the third-person (e.g. "This skill should be used when..." instead of "Use this skill when...").
+---
 
-#### Bundled Resources (optional)
+## Creating Azure SDK Skills
 
-##### Scripts (`scripts/`)
+When creating skills for Azure SDKs, follow these patterns consistently.
 
-Executable code (Python/Bash/etc.) for tasks that require deterministic reliability or are repeatedly rewritten.
+### Skill Section Order
 
-- **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
-- **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
-- **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by Claude for patching or environment-specific adjustments
+Follow this structure (based on existing Azure SDK skills):
 
-##### References (`references/`)
+1. **Title** — `# SDK Name`
+2. **Installation** — `pip install`, `npm install`, etc.
+3. **Environment Variables** — Required configuration
+4. **Authentication** — Always `DefaultAzureCredential`
+5. **Core Workflow** — Minimal viable example
+6. **Feature Tables** — Clients, methods, tools
+7. **Best Practices** — Numbered list
+8. **Reference Links** — Table linking to `/references/*.md`
 
-Documentation and reference material intended to be loaded as needed into context to inform Claude's process and thinking.
+### Authentication Pattern (All Languages)
 
-- **When to include**: For documentation that Claude should reference while working
-- **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
-- **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when Claude determines it's needed
-- **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
-- **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
+Always use `DefaultAzureCredential`:
 
-##### Assets (`assets/`)
+```python
+# Python
+from azure.identity import DefaultAzureCredential
+credential = DefaultAzureCredential()
+client = ServiceClient(endpoint, credential)
+```
 
-Files not intended to be loaded into context, but rather used within the output Claude produces.
+```csharp
+// C#
+var credential = new DefaultAzureCredential();
+var client = new ServiceClient(new Uri(endpoint), credential);
+```
 
-- **When to include**: When the skill needs files that will be used in the final output
-- **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
-- **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables Claude to use files without loading them into context
+```java
+// Java
+TokenCredential credential = new DefaultAzureCredentialBuilder().build();
+ServiceClient client = new ServiceClientBuilder()
+    .endpoint(endpoint)
+    .credential(credential)
+    .buildClient();
+```
 
-### Progressive Disclosure Design Principle
+```typescript
+// TypeScript
+import { DefaultAzureCredential } from "@azure/identity";
+const credential = new DefaultAzureCredential();
+const client = new ServiceClient(endpoint, credential);
+```
 
-Skills use a three-level loading system to manage context efficiently:
+**Never hardcode credentials. Use environment variables.**
 
-1. **Metadata (name + description)** - Always in context (~100 words)
-2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by Claude (Unlimited*)
+### Standard Verb Patterns
 
-*Unlimited because scripts can be executed without reading into context window.
+Azure SDKs use consistent verbs across all languages:
+
+| Verb | Behavior |
+|------|----------|
+| `create` | Create new; fail if exists |
+| `upsert` | Create or update |
+| `get` | Retrieve; error if missing |
+| `list` | Return collection |
+| `delete` | Succeed even if missing |
+| `begin` | Start long-running operation |
+
+### Language-Specific Patterns
+
+See `references/azure-sdk-patterns.md` for detailed patterns including:
+
+- **Python**: `ItemPaged`, `LROPoller`, context managers, Sphinx docstrings
+- **.NET**: `Response<T>`, `Pageable<T>`, `Operation<T>`, mocking support
+- **Java**: Builder pattern, `PagedIterable`/`PagedFlux`, Reactor types
+- **TypeScript**: `PagedAsyncIterableIterator`, `AbortSignal`, browser considerations
+
+### Example: Azure SDK Skill Structure
+
+```markdown
+---
+name: skill-creator
+description: |
+  Azure AI Example SDK for Python. Use for [specific service features].
+  Triggers: "example service", "create example", "list examples".
+---
+
+# Azure AI Example SDK
+
+## Installation
+
+\`\`\`bash
+pip install azure-ai-example
+\`\`\`
+
+## Environment Variables
+
+\`\`\`bash
+AZURE_EXAMPLE_ENDPOINT=https://<resource>.example.azure.com
+\`\`\`
+
+## Authentication
+
+\`\`\`python
+from azure.identity import DefaultAzureCredential
+from azure.ai.example import ExampleClient
+
+credential = DefaultAzureCredential()
+client = ExampleClient(
+    endpoint=os.environ["AZURE_EXAMPLE_ENDPOINT"],
+    credential=credential
+)
+\`\`\`
+
+## Core Workflow
+
+\`\`\`python
+# Create
+item = client.create_item(name="example", data={...})
+
+# List (pagination handled automatically)
+for item in client.list_items():
+    print(item.name)
+
+# Long-running operation
+poller = client.begin_process(item_id)
+result = poller.result()
+
+# Cleanup
+client.delete_item(item_id)
+\`\`\`
+
+## Reference Files
+
+| File | Contents |
+|------|----------|
+| [references/tools.md](references/tools.md) | Tool integrations |
+| [references/streaming.md](references/streaming.md) | Event streaming patterns |
+```
+
+---
 
 ## Skill Creation Process
 
-To create a skill, follow the "Skill Creation Process" in order, skipping steps only if there is a clear reason why they are not applicable.
+1. **Gather SDK Context** — User provides SDK/API reference (REQUIRED)
+2. **Understand** — Research SDK patterns from official docs
+3. **Plan** — Identify reusable resources and product area category
+4. **Create** — Write SKILL.md in `.github/skills/<skill-name>/`
+5. **Categorize** — Create symlink in `skills/<language>/<category>/`
+6. **Test** — Create acceptance criteria and test scenarios
+7. **Document** — Update README.md skill catalog
+8. **Iterate** — Refine based on real usage
 
-### Step 1: Understanding the Skill with Concrete Examples
+### Step 1: Gather SDK Context (REQUIRED)
 
-Skip this step only when the skill's usage patterns are already clearly understood. It remains valuable even when working with an existing skill.
+**Before creating any SDK skill, the user MUST provide:**
 
-To create an effective skill, clearly understand concrete examples of how the skill will be used. This understanding can come from either direct user examples or generated examples that are validated with user feedback.
+| Required | Example | Purpose |
+|----------|---------|---------|
+| **SDK Package** | `azure-ai-agents`, `Azure.AI.OpenAI` | Identifies the exact SDK |
+| **Documentation URL** | `https://learn.microsoft.com/en-us/azure/ai-services/...` | Primary source of truth |
+| **Repository** (optional) | `Azure/azure-sdk-for-python` | For code patterns |
 
-For example, when building an image-editor skill, relevant questions include:
-
-- "What functionality should the image-editor skill support? Editing, rotating, anything else?"
-- "Can you give some examples of how this skill would be used?"
-- "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
-- "What would a user say that should trigger this skill?"
-
-To avoid overwhelming users, avoid asking too many questions in a single message. Start with the most important questions and follow up as needed for better effectiveness.
-
-Conclude this step when there is a clear sense of the functionality the skill should support.
-
-### Step 2: Planning the Reusable Skill Contents
-
-To turn concrete examples into an effective skill, analyze each example by:
-
-1. Considering how to execute on the example from scratch
-2. Identifying what scripts, references, and assets would be helpful when executing these workflows repeatedly
-
-Example: When building a `pdf-editor` skill to handle queries like "Help me rotate this PDF," the analysis shows:
-
-1. Rotating a PDF requires re-writing the same code each time
-2. A `scripts/rotate_pdf.py` script would be helpful to store in the skill
-
-Example: When designing a `frontend-webapp-builder` skill for queries like "Build me a todo app" or "Build me a dashboard to track my steps," the analysis shows:
-
-1. Writing a frontend webapp requires the same boilerplate HTML/React each time
-2. An `assets/hello-world/` template containing the boilerplate HTML/React project files would be helpful to store in the skill
-
-Example: When building a `big-query` skill to handle queries like "How many users have logged in today?" the analysis shows:
-
-1. Querying BigQuery requires re-discovering the table schemas and relationships each time
-2. A `references/schema.md` file documenting the table schemas would be helpful to store in the skill
-
-To establish the skill's contents, analyze each concrete example to create a list of the reusable resources to include: scripts, references, and assets.
-
-### Step 3: Initializing the Skill
-
-At this point, it is time to actually create the skill.
-
-Skip this step only if the skill being developed already exists, and iteration or packaging is needed. In this case, continue to the next step.
-
-When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
-
-Usage:
-
-```bash
-scripts/init_skill.py <skill-name> --path <output-directory>
+**Prompt the user if not provided:**
+```
+To create this skill, I need:
+1. The SDK package name (e.g., azure-ai-projects)
+2. The Microsoft Learn documentation URL or GitHub repo
+3. The target language (py/dotnet/ts/java)
 ```
 
-The script:
-
-- Creates the skill directory at the specified path
-- Generates a SKILL.md template with proper frontmatter and TODO placeholders
-- Creates example resource directories: `scripts/`, `references/`, and `assets/`
-- Adds example files in each directory that can be customized or deleted
-
-After initialization, customize or remove the generated SKILL.md and example files as needed.
-
-### Step 4: Edit the Skill
-
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Claude to use. Focus on including information that would be beneficial and non-obvious to Claude. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Claude instance execute these tasks more effectively.
-
-#### Start with Reusable Skill Contents
-
-To begin implementation, start with the reusable resources identified above: `scripts/`, `references/`, and `assets/` files. Note that this step may require user input. For example, when implementing a `brand-guidelines` skill, the user may need to provide brand assets or templates to store in `assets/`, or documentation to store in `references/`.
-
-Also, delete any example files and directories not needed for the skill. The initialization script creates example files in `scripts/`, `references/`, and `assets/` to demonstrate structure, but most skills won't need all of them.
-
-#### Update SKILL.md
-
-**Writing Style:** Write the entire skill using **imperative/infinitive form** (verb-first instructions), not second person. Use objective, instructional language (e.g., "To accomplish X, do Y" rather than "You should do X" or "If you need to do X"). This maintains consistency and clarity for AI consumption.
-
-To complete SKILL.md, answer the following questions:
-
-1. What is the purpose of the skill, in a few sentences?
-2. When should the skill be used?
-3. In practice, how should Claude use the skill? All reusable skill contents developed above should be referenced so that Claude knows how to use them.
-
-### Step 5: Packaging a Skill
-
-Once the skill is ready, it should be packaged into a distributable zip file that gets shared with the user. The packaging process automatically validates the skill first to ensure it meets all requirements:
-
+**Search official docs first:**
 ```bash
-scripts/package_skill.py <path/to/skill-folder>
+# Use microsoft-docs MCP to get current API patterns
+# Query: "[SDK name] [operation] [language]"
+# Verify: Parameters match the latest SDK version
 ```
 
-Optional output directory specification:
+### Step 2: Understand the Skill
 
-```bash
-scripts/package_skill.py <path/to/skill-folder> ./dist
+Gather concrete examples:
+
+- "What SDK operations should this skill cover?"
+- "What triggers should activate this skill?"
+- "What errors do developers commonly encounter?"
+
+| Example Task | Reusable Resource |
+|--------------|-------------------|
+| Same auth code each time | Code example in SKILL.md |
+| Complex streaming patterns | `references/streaming.md` |
+| Tool configurations | `references/tools.md` |
+| Error handling patterns | `references/error-handling.md` |
+
+### Step 3: Plan Product Area Category
+
+Skills are organized by **language** and **product area** in the `skills/` directory via symlinks.
+
+**Product Area Categories:**
+
+| Category | Description | Examples |
+|----------|-------------|----------|
+| `foundry` | AI Foundry, agents, projects, inference | `azure-ai-agents-py`, `azure-ai-projects-py` |
+| `data` | Storage, Cosmos DB, Tables, Data Lake | `azure-cosmos-py`, `azure-storage-blob-py` |
+| `messaging` | Event Hubs, Service Bus, Event Grid | `azure-eventhub-py`, `azure-servicebus-py` |
+| `monitoring` | OpenTelemetry, App Insights, Query | `azure-monitor-opentelemetry-py` |
+| `identity` | Authentication, DefaultAzureCredential | `azure-identity-py` |
+| `security` | Key Vault, secrets, keys, certificates | `azure-keyvault-py` |
+| `integration` | API Management, App Configuration | `azure-appconfiguration-py` |
+| `compute` | Batch, ML compute | `azure-compute-batch-java` |
+| `container` | Container Registry, ACR | `azure-containerregistry-py` |
+
+**Determine the category** based on:
+1. Azure service family (Storage → `data`, Event Hubs → `messaging`)
+2. Primary use case (AI agents → `foundry`)
+3. Existing skills in the same service area
+
+### Step 4: Create the Skill
+
+**Location:** `.github/skills/<skill-name>/SKILL.md`
+
+**Naming convention:**
+- `azure-<service>-<subservice>-<language>`
+- Examples: `azure-ai-agents-py`, `azure-cosmos-java`, `azure-storage-blob-ts`
+
+**For Azure SDK skills:**
+
+1. Search `microsoft-docs` MCP for current API patterns
+2. Verify against installed SDK version
+3. Follow the section order above
+4. Include cleanup code in examples
+5. Add feature comparison tables
+
+**Write bundled resources first**, then SKILL.md.
+
+**Frontmatter:**
+
+```yaml
+---
+name: skill-name-py
+description: |
+  Azure Service SDK for Python. Use for [specific features].
+  Triggers: "service name", "create resource", "specific operation".
+---
 ```
 
-The packaging script will:
+### Step 5: Categorize with Symlinks
 
-1. **Validate** the skill automatically, checking:
-   - YAML frontmatter format and required fields
-   - Skill naming conventions and directory structure
-   - Description completeness and quality
-   - File organization and resource references
+After creating the skill in `.github/skills/`, create a symlink in the appropriate category:
 
-2. **Package** the skill if validation passes, creating a zip file named after the skill (e.g., `my-skill.zip`) that includes all files and maintains the proper directory structure for distribution.
+```bash
+# Pattern: skills/<language>/<category>/<short-name> -> ../../../.github/skills/<full-skill-name>
 
-If validation fails, the script will report the errors and exit without creating a package. Fix any validation errors and run the packaging command again.
+# Example for azure-ai-agents-py in python/foundry:
+cd skills/python/foundry
+ln -s ../../../.github/skills/azure-ai-agents-py agents
 
-### Step 6: Iterate
+# Example for azure-cosmos-db-py in python/data:
+cd skills/python/data
+ln -s ../../../.github/skills/azure-cosmos-db-py cosmos-db
+```
 
-After testing the skill, users may request improvements. Often this happens right after using the skill, with fresh context of how the skill performed.
+**Symlink naming:**
+- Use short, descriptive names (e.g., `agents`, `cosmos`, `blob`)
+- Remove the `azure-` prefix and language suffix
+- Match existing patterns in the category
 
-**Iteration workflow:**
-1. Use the skill on real tasks
-2. Notice struggles or inefficiencies
-3. Identify how SKILL.md or bundled resources should be updated
-4. Implement changes and test again
+**Verify the symlink:**
+```bash
+ls -la skills/python/foundry/agents
+# Should show: agents -> ../../../.github/skills/azure-ai-agents-py
+```
 
-## References
-- [Agent Skills](https://docs.claude.com/en/docs/claude-code/skills.md)
-- [Agent Skills Spec](.claude/skills/agent_skills_spec.md)
-- [Agent Skills Overview](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview.md)
-- [Best Practices](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/best-practices.md)
+### Step 6: Create Tests
+
+**Every skill MUST have acceptance criteria and test scenarios.**
+
+#### 6.1 Create Acceptance Criteria
+
+**Location:** `.github/skills/<skill-name>/references/acceptance-criteria.md`
+
+**Source materials** (in priority order):
+1. Official Microsoft Learn docs (via `microsoft-docs` MCP)
+2. SDK source code from the repository
+3. Existing reference files in the skill
+
+**Format:**
+```markdown
+# Acceptance Criteria: <skill-name>
+
+**SDK**: `package-name`
+**Repository**: https://github.com/Azure/azure-sdk-for-<language>
+**Purpose**: Skill testing acceptance criteria
+
+---
+
+## 1. Correct Import Patterns
+
+### 1.1 Client Imports
+
+#### ✅ CORRECT: Main Client
+\`\`\`python
+from azure.ai.mymodule import MyClient
+from azure.identity import DefaultAzureCredential
+\`\`\`
+
+#### ❌ INCORRECT: Wrong Module Path
+\`\`\`python
+from azure.ai.mymodule.models import MyClient  # Wrong - Client is not in models
+\`\`\`
+
+## 2. Authentication Patterns
+
+#### ✅ CORRECT: DefaultAzureCredential
+\`\`\`python
+credential = DefaultAzureCredential()
+client = MyClient(endpoint, credential)
+\`\`\`
+
+#### ❌ INCORRECT: Hardcoded Credentials
+\`\`\`python
+client = MyClient(endpoint, api_key="hardcoded")  # Security risk
+\`\`\`
+```
+
+**Critical patterns to document:**
+- Import paths (these vary significantly between Azure SDKs)
+- Authentication patterns
+- Client initialization
+- Async variants (`.aio` modules)
+- Common anti-patterns
+
+#### 6.2 Create Test Scenarios
+
+**Location:** `tests/scenarios/<skill-name>/scenarios.yaml`
+
+```yaml
+config:
+  model: gpt-4
+  max_tokens: 2000
+  temperature: 0.3
+
+scenarios:
+  - name: basic_client_creation
+    prompt: |
+      Create a basic example using the Azure SDK.
+      Include proper authentication and client initialization.
+    expected_patterns:
+      - "DefaultAzureCredential"
+      - "MyClient"
+    forbidden_patterns:
+      - "api_key="
+      - "hardcoded"
+    tags:
+      - basic
+      - authentication
+    mock_response: |
+      import os
+      from azure.identity import DefaultAzureCredential
+      from azure.ai.mymodule import MyClient
+      
+      credential = DefaultAzureCredential()
+      client = MyClient(
+          endpoint=os.environ["AZURE_ENDPOINT"],
+          credential=credential
+      )
+      # ... rest of working example
+```
+
+**Scenario design principles:**
+- Each scenario tests ONE specific pattern or feature
+- `expected_patterns` — patterns that MUST appear
+- `forbidden_patterns` — common mistakes that must NOT appear
+- `mock_response` — complete, working code that passes all checks
+- `tags` — for filtering (`basic`, `async`, `streaming`, `tools`)
+
+#### 6.3 Run Tests
+
+```bash
+cd tests
+pnpm install
+
+# Check skill is discovered
+pnpm harness --list
+
+# Run in mock mode (fast, deterministic)
+pnpm harness <skill-name> --mock --verbose
+
+# Run with Ralph Loop (iterative improvement)
+pnpm harness <skill-name> --ralph --mock --max-iterations 5 --threshold 85
+```
+
+**Success criteria:**
+- All scenarios pass (100% pass rate)
+- No false positives (mock responses always pass)
+- Patterns catch real mistakes
+
+### Step 7: Update Documentation
+
+After creating the skill:
+
+1. **Update README.md** — Add the skill to the appropriate language section in the Skill Catalog
+   - Update total skill count (line ~75: `> N skills in...`)
+   - Update language count table (lines ~77-83)
+   - Update language section count (e.g., `> N skills • suffix: -py`)
+   - Update category count (e.g., `<summary><strong>Foundry & AI</strong> (N skills)</summary>`)
+   - Add skill row in alphabetical order within its category
+   - Update test coverage table (line ~590: `**N skills with N test scenarios**`)
+
+2. **Update docs/index.html** — Add the skill to the GitHub Pages site
+   - Update badge count: `<span class="badge-count">N</span> Skills` (line ~717)
+   - Update tab count: `All <span class="tab-count">N</span>` (line ~806)
+   - Add skill entry in the JavaScript `skills` array (around line ~1060-1300)
+   
+   **Skill entry format:**
+   ```javascript
+   {
+       name: "skill-name-py",
+       lang: "py",
+       desc: "Short description — key features",
+   },
+   ```
+   
+   **Placement:** Add in the appropriate language/category section (skills are grouped by language, then roughly by category in the array).
+
+3. **Verify AGENTS.md** — Ensure the skill count is accurate
+
+---
+
+## Progressive Disclosure Patterns
+
+### Pattern 1: High-Level Guide with References
+
+```markdown
+# SDK Name
+
+## Quick Start
+[Minimal example]
+
+## Advanced Features
+- **Streaming**: See [references/streaming.md](references/streaming.md)
+- **Tools**: See [references/tools.md](references/tools.md)
+```
+
+### Pattern 2: Language Variants
+
+```
+azure-service-skill/
+├── SKILL.md (overview + language selection)
+└── references/
+    ├── python.md
+    ├── dotnet.md
+    ├── java.md
+    └── typescript.md
+```
+
+### Pattern 3: Feature Organization
+
+```
+azure-ai-agents/
+├── SKILL.md (core workflow)
+└── references/
+    ├── tools.md
+    ├── streaming.md
+    ├── async-patterns.md
+    └── error-handling.md
+```
+
+---
+
+## Design Pattern References
+
+| Reference | Contents |
+|-----------|----------|
+| `references/workflows.md` | Sequential and conditional workflows |
+| `references/output-patterns.md` | Templates and examples |
+| `references/azure-sdk-patterns.md` | Language-specific Azure SDK patterns |
+
+---
+
+## Anti-Patterns
+
+| Don't | Why |
+|-------|-----|
+| Create skill without SDK context | Users must provide package name/docs URL |
+| Put "when to use" in body | Body loads AFTER triggering |
+| Hardcode credentials | Security risk |
+| Skip authentication section | Agents will improvise poorly |
+| Use outdated SDK patterns | APIs change; search docs first |
+| Include README.md | Agents don't need meta-docs |
+| Deeply nest references | Keep one level deep |
+| Skip acceptance criteria | Skills without tests can't be validated |
+| Skip symlink categorization | Skills won't be discoverable by category |
+| Use wrong import paths | Azure SDKs have specific module structures |
+
+---
+
+## Checklist
+
+Before completing a skill:
+
+**Prerequisites:**
+- [ ] User provided SDK package name or documentation URL
+- [ ] Verified SDK patterns via `microsoft-docs` MCP
+
+**Skill Creation:**
+- [ ] Description includes what AND when (trigger phrases)
+- [ ] SKILL.md under 500 lines
+- [ ] Authentication uses `DefaultAzureCredential`
+- [ ] Includes cleanup/delete in examples
+- [ ] References organized by feature
+
+**Categorization:**
+- [ ] Skill created in `.github/skills/<skill-name>/`
+- [ ] Symlink created in `skills/<language>/<category>/<short-name>`
+- [ ] Symlink points to `../../../.github/skills/<skill-name>`
+
+**Testing:**
+- [ ] `references/acceptance-criteria.md` created with correct/incorrect patterns
+- [ ] `tests/scenarios/<skill-name>/scenarios.yaml` created
+- [ ] All scenarios pass (`pnpm harness <skill> --mock`)
+- [ ] Import paths documented precisely
+
+**Documentation:**
+- [ ] README.md skill catalog updated
+- [ ] Instructs to search `microsoft-docs` MCP for current APIs
