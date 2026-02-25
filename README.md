@@ -8,7 +8,56 @@ Skills and MCP tools for backend development and code review.
 
 Use the **code-review** skill to review pull requests and post comments via the PR Comment MCP. Follow these steps once per machine (or per project).
 
-### 1. Copy the code-review skill to Cursor skills folder
+### 1. Add PR Review MCP to Cursor (SSE)
+
+Add the PR Comment MCP server so you can store tokens and post review comments to Azure DevOps (or GitHub/AWS later). Use **SSE** (Server-Sent Events) so Cursor connects to the server via a URL.
+
+**1.1. Start the MCP server with SSE** (in a terminal, or run as a background service):
+
+```bash
+cd mcp/code_reviewer
+uv sync
+uv run python server.py --transport sse --host 127.0.0.1 --port 8080
+```
+
+Keep this process running while using Cursor. Default port is `8080`; change `--port` if needed.
+
+**1.2. Add the server to Cursor**
+
+- **Option A — Project config:** Create or edit `BESkills/.cursor/mcp.json` (commit to repo to share with the team).
+- **Option B — User config:** Cursor Settings → Tools & MCP → Add new MCP server (uses your user config, e.g. `~/.cursor/mcp.json`).
+
+Add an entry for the PR Comment MCP with the SSE URL. Example:
+
+```json
+{
+  "mcpServers": {
+    "pr-comment": {
+      "url": "http://127.0.0.1:8080/sse",
+      "headers": {
+        "X-User-Id": "you@company.com"
+      }
+    }
+  }
+}
+```
+
+- Use the same host and port as in the `server.py` command (e.g. if you use `--port 3000`, set `"url": "http://127.0.0.1:3000/sse"`).
+- **User identity required:** Set `X-User-Id` (SSE/HTTP) in the config above, or set `USER_ID` in the server’s `env` for stdio. The server will error if neither is set when you call add_token or post_pr_comments.
+- Optional: add a token for auth: `"url": "http://127.0.0.1:8080/sse?token=YOUR_TOKEN"` (if your server validates it).
+
+Restart Cursor after changing MCP config so it connects to the SSE endpoint.
+
+### 2. Store your PR token
+
+Before running reviews, store your Personal Access Token so the MCP can post comments. In Cursor, use one of these prompts:
+
+- **"Store PR token for Azure DevOps. Org: \<your-org\>, Project: \<your-project\>, Token: \<paste PAT\>."**
+- Or: **"Use the add_token tool to store an Azure DevOps PAT for org \<org\> and project \<project\>. Token: \<PAT\>."**
+
+You must pass a user identity when storing the token (or have `X-User-Id` / `USER_ID` set as in step 1).
+
+### 3. Copy the code-review skill to Cursor skills folder
 
 Copy the `code-review` folder into your Cursor skills directory so Cursor can load the skill:
 
@@ -33,7 +82,7 @@ cp -R ./code-review ~/.cursor/skills/code-review
 
 Ensure the folder contains `SKILL.md` and the `references/` subfolder (e.g. `checklists.md`, `pr-comment-format.md`).
 
-### 2. Create `repos` folder and clone projects
+### 4. Create `repos` folder and clone projects
 
 Create a `repos` directory (e.g. next to the BESkills repo or inside it) and clone every repository that may be reviewed:
 
@@ -54,7 +103,7 @@ git clone <clone-url-for-repo-1>
 git clone <clone-url-for-repo-2>
 ```
 
-### 3. Update repository mapping in SKILL.md
+### 5. Update repository mapping in SKILL.md
 
 Edit the **Repository Mapping** table in the skill’s `SKILL.md`. Use the **copied** skill file under `.cursor\skills\code-review\SKILL.md` (or the one in this repo if you prefer to edit here and re-copy).
 
@@ -67,64 +116,11 @@ Set each repository’s path to the local clone under `repos`:
 
 Paths are relative to the workspace root where you run the review, or use absolute paths so they work from any CWD.
 
-### 4. Add PR Review MCP to Cursor MCP config (SSE)
-
-Add the PR Comment MCP server so you can store tokens and post review comments to Azure DevOps (or GitHub/AWS later). Use **SSE** (Server-Sent Events) so Cursor connects to the server via a URL.
-
-**1. Start the MCP server with SSE** (in a terminal, or run as a background service):
-
-```bash
-cd mcp/code_reviewer
-uv sync
-uv run python server.py --transport sse --host 127.0.0.1 --port 8080
-```
-
-Keep this process running while using Cursor. Default port is `8080`; change `--port` if needed.
-
-**2. Add the server to Cursor**
-
-- **Option A — Project config:** Create or edit `BESkills/.cursor/mcp.json` (commit to repo to share with the team).
-- **Option B — User config:** Cursor Settings → Tools & MCP → Add new MCP server (uses your user config, e.g. `~/.cursor/mcp.json`).
-
-Add an entry for the PR Comment MCP with the SSE URL. Example:
-
-```json
-{
-  "mcpServers": {
-    "pr-comment": {
-      "url": "http://127.0.0.1:8080/sse",
-      "headers": {
-        "X-User-Id": "you@company.com"
-      }
-    }
-  }
-}
-```
-
-- Use the same host and port as in the `server.py` command (e.g. if you use `--port 3000`, set `"url": "http://127.0.0.1:3000/sse"`).
-- **Multi-user (SSE):** To identify the current user when not passing `user_id` in tool calls, send the `X-User-Id` header from your client (e.g. via a reverse proxy or gateway). Alternatively, run one server per user with different ports and set `USER_ID` in the server environment.
-- **Stdio (one user per Cursor):** If you run the server via stdio instead of SSE, you can set `USER_ID` in the server’s `env` in the same config (e.g. `"env": { "USER_ID": "you@company.com" }`) so the default user is used when `user_id` is omitted.
-- Optional: add a token for auth: `"url": "http://127.0.0.1:8080/sse?token=YOUR_TOKEN"` (if your server validates it).
-
-Restart Cursor after changing MCP config so it connects to the SSE endpoint.
-
 ---
 
 ## Code Review — Prompts
 
-After setup, use these prompts in Cursor.
-
-### Store PR token (one-time per org/project)
-
-Store your Personal Access Token so the MCP can post comments to Azure DevOps (or GitHub/AWS):
-
-- **Prompt:**  
-  **"Store PR token for Azure DevOps. Org: \<your-org\>, Project: \<your-project\>, Token: \<paste PAT\>."**
-
-- Or be explicit:  
-  **"Use the add_token tool to store an Azure DevOps PAT for org \<org\> and project \<project\>."**
-
-The MCP stores the token in a credentials file (e.g. `~/.pr-comment-mcp/credentials.json`). Do not share or commit this file.
+After setup (including storing your PR token in step 2), use these prompts in Cursor.
 
 ### Review a pull request
 
