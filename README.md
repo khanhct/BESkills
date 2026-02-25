@@ -81,21 +81,29 @@ uv run python server.py --transport sse --host 127.0.0.1 --port 8080
 
 Keep this process running while using Cursor. Default port is `8080`; change `--port` if needed.
 
-**2. Add the server to Cursor** — Config file: `BESkills/.cursor/mcp.json` or Cursor Settings → Tools & MCP → Add new MCP server (user config).
+**2. Add the server to Cursor**
 
-**Example `mcp.json` using SSE URL:**
+- **Option A — Project config:** Create or edit `BESkills/.cursor/mcp.json` (commit to repo to share with the team).
+- **Option B — User config:** Cursor Settings → Tools & MCP → Add new MCP server (uses your user config, e.g. `~/.cursor/mcp.json`).
+
+Add an entry for the PR Comment MCP with the SSE URL. Example:
 
 ```json
 {
   "mcpServers": {
     "pr-comment": {
-      "url": "http://127.0.0.1:8080/sse"
+      "url": "http://127.0.0.1:8080/sse",
+      "headers": {
+        "X-User-Id": "you@company.com"
+      }
     }
   }
 }
 ```
 
-- Use the same host and port as in the `server.py` command. If you use a different port (e.g. `3000`), set `"url": "http://127.0.0.1:3000/sse"`.
+- Use the same host and port as in the `server.py` command (e.g. if you use `--port 3000`, set `"url": "http://127.0.0.1:3000/sse"`).
+- **Multi-user (SSE):** To identify the current user when not passing `user_id` in tool calls, send the `X-User-Id` header from your client (e.g. via a reverse proxy or gateway). Alternatively, run one server per user with different ports and set `USER_ID` in the server environment.
+- **Stdio (one user per Cursor):** If you run the server via stdio instead of SSE, you can set `USER_ID` in the server’s `env` in the same config (e.g. `"env": { "USER_ID": "you@company.com" }`) so the default user is used when `user_id` is omitted.
 - Optional: add a token for auth: `"url": "http://127.0.0.1:8080/sse?token=YOUR_TOKEN"` (if your server validates it).
 
 Restart Cursor after changing MCP config so it connects to the SSE endpoint.
