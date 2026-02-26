@@ -72,11 +72,13 @@ mkdir -p ~/.cursor/skills
 cp -R ./code-review ~/.cursor/skills/code-review
 ```
 
-Ensure the folder contains `SKILL.md` and the `references/` subfolder (e.g. `checklists.md`, `pr-comment-format.md`).
+Ensure the folder contains `SKILL.md`, the `references/` subfolder, and `prompts/` (e.g. `review-and-post-pr.md`).
 
 ### 3. Create `repos` folder and clone projects
 
-Create a `repos` directory (e.g. next to the BESkills repo or inside it) and clone every repository that may be reviewed:
+**Requirement:** Install [Git](https://git-scm.com/) and use the **git** command for cloning and all other git actions (fetch, pull, checkout, diff, etc.). The code-review workflow relies on git being available in your environment.
+
+Create a `repos` directory (e.g. next to the BESkills repo or inside it) and clone every repository that may be reviewed using `git clone`:
 
 ```powershell
 # Windows (PowerShell) — example: repos beside BESkills
@@ -94,6 +96,8 @@ mkdir -p repos && cd repos
 git clone <clone-url-for-repo-1>
 git clone <clone-url-for-repo-2>
 ```
+
+Ensure `git` is on your PATH (`git --version` should work in a terminal). The agent and the code-review skill use git to pull branches, compute diffs, and perform branch cleanup.
 
 ### 4. Update repository mapping in SKILL.md
 
@@ -135,6 +139,15 @@ The agent will:
 For **Azure DevOps**, the PR link usually contains org, project, repo, and pull request ID; the agent can infer them or you can specify: “Post these comments to Azure DevOps org X, project Y, repository Z, PR 123.”
 
 **All-in-one (review + post):** Use the prompt file [code-review/prompts/review-and-post-pr.md](code-review/prompts/review-and-post-pr.md): it runs the code-review skill, then checks the output JSON and posts comments only if the file contains any threads.
+
+#### How to use the review-and-post-pr prompt
+
+1. **Open the prompt file** in your workspace: `code-review/prompts/review-and-post-pr.md`.
+2. **In Cursor chat**, reference it and give the PR link. For example:
+   - **"Follow the steps in @code-review/prompts/review-and-post-pr.md and review this PR: \<paste PR link\>."**
+   - Or: **"Using @code-review/prompts/review-and-post-pr.md, review and post comments for https://dev.azure.com/my-org/my-project/_git/repo-a/pullrequest/123."**
+3. The agent will (1) run the code-review skill and write `code-review/{pr_id}.json`, then (2) read that file and call **post_pr_comments** only if there are comments to post.
+4. **Prerequisites:** MCP server running (step 1), token header set in `mcp.json` for your org/project, and (if you use the skill from Cursor skills) the code-review skill copied to `.cursor/skills/code-review/` so the agent can follow the workflow.
 
 ### Post PR comments
 
