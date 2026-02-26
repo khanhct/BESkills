@@ -137,7 +137,7 @@ The agent will:
 
 1. Use the code-review skill (workflow, evaluation criteria, checklists).
 2. Pull latest target and PR branches, compute the diff, and review changed files.
-3. Produce a comments JSON file (e.g. `pr-review-comments.json`).
+3. Produce a comments JSON file named `{pr_id}.json` (e.g. `123.json` for PR 123).
 4. If the PR Comment MCP is enabled and a token is stored, you can ask to post those comments to the PR (see **Post PR comments** below).
 
 For **Azure DevOps**, the PR link usually contains org, project, repo, and pull request ID; the agent can infer them or you can specify: “Post these comments to Azure DevOps org X, project Y, repository Z, PR 123.”
@@ -147,10 +147,10 @@ For **Azure DevOps**, the PR link usually contains org, project, repo, and pull 
 After a review has produced a comments file, post its contents to the PR using the MCP:
 
 - **Prompt:**  
-  **"Post PR comments from @pr-review-comments.json"**
+  **"Post PR comments from @123.json"** (use the actual PR ID as the filename, e.g. @456.json for PR 456)
 
 - Or:  
-  **"Let’s post PR comments. Use @pr-review-comments.json and post them to this PR."**
+  **"Let’s post PR comments. Use the comments file for this PR (e.g. @123.json) and post them to this PR."**
 
 You may need to specify provider, org, project, repository, and pull request ID if the agent cannot infer them from context (e.g. from a PR link or the current branch).
 

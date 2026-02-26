@@ -21,18 +21,29 @@ Systematic review of code changes: security, correctness, performance, style, an
 
 **Requirement:** Pull the latest `develop` (or target) and PR branches when available before computing the diff. Do not review from stale local branches.
 
+**Principle:** Base the review on **both** the **code changes** (the diff) and **code context** (surrounding code, callers/callees, existing patterns, how the change fits in). Do not review from the diff alone—dive into the source to understand impact and consistency.
+
 Follow this order so high-impact issues are caught first:
 
 1. **Pull latest branches** — Before computing the diff, pull the latest target branch (e.g. `develop`) and the PR branch in each repo from the repository mapping. Run `git fetch origin`, then update both branches if they exist (e.g. `git checkout develop && git pull`, then `git checkout <pr-branch> && git pull`). Skip or adapt if the PR branch exists only locally or the repo is not a git clone. This ensures the diff is against the current state of both branches.
 2. **Scope** — Identify what changed (files, modules, dependencies). Note language, framework, and test layout.
-3. **Security & correctness** — Look for injection, auth flaws, data exposure, null/edge handling, race conditions.
-4. **Performance** — Expensive operations, N+1, missing indexes, unnecessary allocations, blocking calls.
-5. **Design & maintainability** — SOLID, duplication, coupling, naming, file size, separation of concerns.
-6. **Tests & docs** — Coverage of changed behavior, brittle tests, missing docs or comments where needed.
-7. **Style & consistency** — Lint/format rules, project conventions, consistent patterns.
-8. **Cleanup** — After writing the review comments file, delete the local PR branch in each repo used for the review (e.g. switch to `develop` with `git checkout develop`, then `git branch -d <pr-branch>` or `-D` if not merged). Skip if the branch was not checked out locally or the user prefers to keep it.
+3. **Dive into source & context** — Read the changed files and surrounding code. Understand how the change fits: who calls the modified code, what it calls, data flow, and existing patterns in the codebase. Use this context when reviewing; the diff alone is not enough.
+4. **Security & correctness** — Using both the diff and context, look for injection, auth flaws, data exposure, null/edge handling, race conditions.
+5. **Performance** — Expensive operations, N+1, missing indexes, unnecessary allocations, blocking calls (in changed code and in the call paths you saw in context).
+6. **Design & maintainability** — SOLID, duplication, coupling, naming, file size, separation of concerns (relative to the rest of the codebase).
+7. **Tests & docs** — Coverage of changed behavior, brittle tests, missing docs or comments where needed.
+8. **Style & consistency** — Lint/format rules, project conventions, consistent patterns.
+9. **Cleanup** — After writing the review comments file, delete the local PR branch in each repo used for the review (e.g. switch to `develop` with `git checkout develop`, then `git branch -d <pr-branch>` or `-D` if not merged). Skip if the branch was not checked out locally or the user prefers to keep it.
 
 **Conditional focus:** If the user specifies a focus (e.g. "security only", "performance"), prioritize that area and still note critical issues in others briefly.
+
+## Repository Mapping
+
+A **repository mapping** defines the source code directory for each repository. Use it to find each repo's code when reviewing PRs from multiple repositories. Before computing the diff, pull the latest target branch (e.g. `develop`) and PR branch in each mapped repo (see **Pull latest branches** in the Review Workflow). Define the mapping in a table like this:
+
+| Repository name | Path | Notes |
+|-----------------|------|-------|
+| t1rearc-bff-core |  ./repos/t1rearc-bff-core | t1rearc-bff-core |
 
 ## Evaluation Criteria
 
@@ -53,22 +64,15 @@ For each truly changed file and each diffed hunk, evaluate the changes in the co
 
 ## Output
 
-The **only** output of a code review is a **comments JSON file**. Write it to a single file (e.g. `pr-review-comments.json`) whose root is an **array** of thread objects. If there are any comments, include them as thread objects; if there are none, write an empty array `[]`. Do not produce a markdown report or any other output format. Full schema and examples: [references/pr-comment-format.md](references/pr-comment-format.md).
+The **only** output of a code review is a **comments JSON file**. Write it to a single file named **`{pr_id}.json`** (e.g. `123.json` for PR 123), whose root is an **array** of thread objects. If there are any comments, include them as thread objects; if there are none, write an empty array `[]`. Do not produce a markdown report or any other output format. Full schema and examples: [references/pr-comment-format.md](references/pr-comment-format.md).
 
-### Rules
+### Format rules
 - **Only add a comment when confident** — Skip unclear, stylistic, or low-value observations.
 - **Comment content must be clear and self-contained** — Write each comment as standalone feedback the author can act on. Do **not** reference checklists, reference files (e.g. `references/checklists.md`), or any skill internals in the comment text. Use checklists and focus areas only behind the scenes to decide what to look for; the comment itself should state the issue and suggestion only.
 - **One comment per thread** — Each `threadContext` is one file/range; put **exactly one** comment in that thread's `comments` array. (Publishing systems require one comment per thread.) For multiple findings at the same location, create multiple threads with the same file/range and one comment each.
 - **File path** — In `threadContext.filePath`, use a path with a **leading slash** and **forward slashes** (e.g. `/Electrolux.Cache/Constants/CacheKeyConstants.cs`, `/src/Services/UserService.cs`). Do not omit the leading slash.
 - **Line/offset** — `rightFileStart` and `rightFileEnd` refer to the **right (new) side** of the diff. Same line for single-line; start/end lines for a block.
 - **status**: `1` = active thread. **commentType**: `1` = standard comment. **parentCommentId**: `0` for top-level comments.
-
-### Repository Mapping
-A **repository mapping** defines the source code directory for each repository. Use it to find each repo's code when reviewing PRs from multiple repositories. Before computing the diff, pull the latest target branch (e.g. `develop`) and PR branch in each mapped repo (see **Pull latest branches** in the Review Workflow). Define the mapping in a table like this:
-
-| Repository name | Path | Notes |
-|-----------------|------|-------|
-| t1rearc-bff-core |  ./repos/t1rearc-bff-core | t1rearc-bff-core |
 
 ## Focus Areas
 
