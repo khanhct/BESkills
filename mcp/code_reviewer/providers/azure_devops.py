@@ -25,9 +25,11 @@ def _thread_body(thread: dict[str, Any]) -> dict[str, Any]:
     comments = thread.get("comments", [])
     status = thread.get("status", 1)
     thread_context = thread.get("threadContext") or {}
-    # API sample uses leftFileEnd/leftFileStart null for right-side-only
+    # Normalize file path: string, forward slashes; Azure DevOps examples use leading /
+    raw_path = (thread_context.get("filePath") or "").replace("\\", "/").strip()
+    file_path = ("/" + raw_path.strip("/")) if raw_path else ""
     ctx = {
-        "filePath": thread_context.get("filePath", ""),
+        "filePath": file_path,
         "leftFileStart": None,
         "leftFileEnd": None,
         "rightFileStart": thread_context.get("rightFileStart"),
@@ -91,6 +93,75 @@ def post_threads(
     return {"created": created, "errors": errors}
 
 
+def _ensure_ref(branch: str) -> str:
+    """Ensure branch is in refs/heads/ form."""
+    s = (branch or "").strip()
+    if not s:
+        return s
+    if s.startswith("refs/"):
+        return s
+    return f"refs/heads/{s}"
+
+
+def create_pull_request(
+    token: str,
+    org: str,
+    project: str,
+    repository: str,
+    source_ref: str,
+    target_ref: str,
+    title: str,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """
+    Create a pull request in Azure DevOps.
+
+    source_ref and target_ref can be branch names (e.g. "feature/xyz", "main") or full refs (refs/heads/main).
+    They are normalized to refs/heads/... if not already refs/.
+
+    Returns:
+        {"success": bool, "pull_request_id": int | None, "message": str}
+    """
+    url = (
+        f"{BASE_URL}/{org}/{project}/_apis/git/repositories/{repository}"
+        f"/pullrequests?api-version={API_VERSION}"
+    )
+    headers = {
+        **_auth_header(token),
+        "Content-Type": "application/json",
+    }
+    body = {
+        "sourceRefName": _ensure_ref(source_ref),
+        "targetRefName": _ensure_ref(target_ref),
+        "title": (title or "").strip() or "Pull Request",
+        "description": (description or "").strip() or "",
+    }
+    try:
+        resp = requests.post(url, json=body, headers=headers, timeout=30)
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            pr_id = data.get("pullRequestId") or data.get("pullRequest", {}).get("pullRequestId")
+            return {
+                "success": True,
+                "pull_request_id": pr_id,
+                "message": f"Created pull request {pr_id}.",
+            }
+        try:
+            err_body = resp.json()
+            msg = err_body.get("message", resp.text) or resp.text
+        except Exception:
+            msg = resp.text or f"HTTP {resp.status_code}"
+        if resp.status_code == 401:
+            msg = "Invalid or expired token (401). Check your PAT."
+        elif resp.status_code == 404:
+            msg = "Not found (404). Check org, project, repository, and branch names."
+        elif resp.status_code == 400:
+            msg = f"Bad request (400): {msg}"
+        return {"success": False, "pull_request_id": None, "message": msg}
+    except requests.RequestException as e:
+        return {"success": False, "pull_request_id": None, "message": str(e)}
+
+
 def approve_pull_request(
     token: str,
     org: str,
@@ -103,10 +174,9 @@ def approve_pull_request(
     """
     Approve a pull request (set reviewer vote).
 
-    reviewer_id is required: pass it via header X-{provider}-{org}-{project}-reviewer-id or
-    X-PR-Reviewer-Id, or via the tool param. PUT to the Pull Request Reviewers API with
-    vote (10 = approved, 5 = approved with suggestions, 0 = no vote, -5 = waiting for author,
-    -10 = rejected).
+    reviewer_id is required: pass it via header X-{provider}-{org}-{project}-reviewer-id.
+    PUT to the Pull Request Reviewers API with vote (10 = approved, 5 = approved with suggestions,
+    0 = no vote, -5 = waiting for author, -10 = rejected).
 
     Returns:
         {"success": bool, "message": str}

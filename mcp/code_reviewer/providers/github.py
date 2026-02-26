@@ -37,3 +37,21 @@ def approve_pull_request(
         "success": False,
         "message": "GitHub provider is a placeholder; approve not implemented yet.",
     }
+
+
+def create_pull_request(
+    token: str,
+    org: str,
+    project: str,
+    repository: str,
+    source_ref: str,
+    target_ref: str,
+    title: str,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Placeholder. GitHub create PR not implemented yet."""
+    return {
+        "success": False,
+        "pull_request_id": None,
+        "message": "GitHub provider is a placeholder; create_pull_request not implemented yet.",
+    }

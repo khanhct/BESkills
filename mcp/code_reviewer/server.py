@@ -3,7 +3,9 @@ PR Comment MCP Server — post review comments to PRs (Azure DevOps, GitHub, AWS
 
 Tools:
 - post_pr_comments: Post a JSON array of comment threads to a PR (pr-comment-format.md).
-- approve_pr: Approve a pull request (set reviewer vote). Azure DevOps: vote 10 = approved; GitHub placeholder.
+- approve_pr: Approve a pull request (set reviewer vote). Azure: vote 10 = approved; GitHub placeholder.
+- reject_pr: Reject a pull request (set reviewer vote to -10). Same headers as approve_pr; GitHub placeholder.
+- create_pr: Create a pull request. Azure: source_branch, target_branch, title, description (optional); GitHub placeholder.
 
 Header keys only (no fallbacks, no env, no tool params):
 - Token: X-{provider}-{org}-{project}-token (e.g. X-azure-electrolux-T1-token)
@@ -24,8 +26,10 @@ from starlette.responses import JSONResponse
 
 from providers.azure_devops import post_threads as azure_post_threads
 from providers.azure_devops import approve_pull_request as azure_approve_pr
+from providers.azure_devops import create_pull_request as azure_create_pr
 from providers.github import post_threads as github_post_threads
 from providers.github import approve_pull_request as github_approve_pr
+from providers.github import create_pull_request as github_create_pr
 from validation import validate_comments_body
 
 logger = logging.getLogger(__name__)
@@ -87,7 +91,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
-    instructions="Post PR review comments (post_pr_comments) or approve PRs (approve_pr). Token: header X-{provider}-{org}-{project}-token. Reviewer ID (approve_pr): header X-{provider}-{org}-{project}-reviewer-id. No fallbacks.",
+    instructions="Post PR review comments (post_pr_comments), approve PRs (approve_pr), reject PRs (reject_pr), or create PRs (create_pr). Token: header X-{provider}-{org}-{project}-token. Reviewer ID (approve_pr/reject_pr): header X-{provider}-{org}-{project}-reviewer-id. No fallbacks.",
 )
 
 
@@ -139,7 +143,26 @@ def post_pr_comments(
     pull_request_id: int,
     comments_body: str,
 ) -> str:
-    """Post PR comments. Token must be sent in header X-{provider}-{org}-{project}-token."""
+    """
+    Post one or more comment threads to an existing pull request.
+
+    Each thread is placed at a specific file and line range (right side of the diff).
+    The comments_body must be a JSON array matching pr-comment-format (see references).
+
+    Parameters:
+        provider (str): Git provider. Use "azure" for Azure DevOps; "github" is placeholder.
+        org (str): Organization or account name (e.g. electrolux for Azure DevOps).
+        project (str): Project name within the organization (e.g. T1).
+        repository (str): Repository name or ID.
+        pull_request_id (int): The pull request number (integer ID).
+        comments_body (str): JSON string: array of thread objects. Each thread has "comments" (one comment), "status": 1, and "threadContext" with "filePath" (leading slash), "rightFileStart", "rightFileEnd".
+
+    Returns:
+        str: Success message with count of created threads, or validation/API errors.
+
+    Authentication:
+        Token must be sent in request header: X-{provider}-{org}-{project}-token (e.g. x-azure-electrolux-t1-token).
+    """
     provider = _normalize_provider(provider)
     resolved_token, no_token_msg = _effective_token(provider, org, project)
     if not resolved_token:
@@ -180,7 +203,7 @@ def post_pr_comments(
 
 @mcp.tool(
     name="approve_pr",
-    description="Approve a pull request. Required: provider, org, project, repository, pull_request_id. Token: header X-{provider}-{org}-{project}-token. Reviewer ID (Azure): header X-{provider}-{org}-{project}-reviewer-id. Optional: vote (10=approved). Providers: azure, github (placeholder).",
+    description="Approve a pull request (set reviewer vote to approved). Required: provider, org, project, repository, pull_request_id. Token and reviewer ID from headers. Optional: vote (default 10=approved). Providers: azure, github (placeholder).",
 )
 def approve_pr(
     provider: str,
@@ -191,7 +214,24 @@ def approve_pr(
     vote: int = 10,
 ) -> str:
     """
-    Approve a pull request. Token and reviewer_id must be sent in headers X-{provider}-{org}-{project}-token and X-{provider}-{org}-{project}-reviewer-id.
+    Approve a pull request by setting the current user's reviewer vote.
+
+    For Azure DevOps, the reviewer is identified by the reviewer_id header; the PAT identifies the user.
+
+    Parameters:
+        provider (str): Git provider. Use "azure" for Azure DevOps; "github" is placeholder.
+        org (str): Organization or account name.
+        project (str): Project name within the organization.
+        repository (str): Repository name or ID.
+        pull_request_id (int): The pull request number (integer ID).
+        vote (int): Reviewer vote. 10 = approved (default), 5 = approved with suggestions, 0 = no vote, -5 = waiting for author, -10 = rejected.
+
+    Returns:
+        str: Success message or error description.
+
+    Authentication:
+        Token: header X-{provider}-{org}-{project}-token.
+        Reviewer ID (Azure): header X-{provider}-{org}-{project}-reviewer-id (your Azure DevOps identity GUID).
     """
     provider = _normalize_provider(provider)
     if provider == "azure":
@@ -225,6 +265,140 @@ def approve_pr(
             repository=repository,
             pull_request_id=pull_request_id,
             vote=vote,
+        )
+        return result["message"]
+    return f"Provider '{provider}' is not implemented. Use azure or github (placeholder)."
+
+
+@mcp.tool(
+    name="reject_pr",
+    description="Reject a pull request (set reviewer vote to -10). Required: provider, org, project, repository, pull_request_id. Token and reviewer ID from headers (same as approve_pr). Providers: azure, github (placeholder).",
+)
+def reject_pr(
+    provider: str,
+    org: str,
+    project: str,
+    repository: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Reject a pull request by setting the current user's reviewer vote to rejected (-10).
+
+    Uses the same authentication as approve_pr (token and reviewer_id headers).
+
+    Parameters:
+        provider (str): Git provider. Use "azure" for Azure DevOps; "github" is placeholder.
+        org (str): Organization or account name.
+        project (str): Project name within the organization.
+        repository (str): Repository name or ID.
+        pull_request_id (int): The pull request number (integer ID).
+
+    Returns:
+        str: Success message or error description.
+
+    Authentication:
+        Token: header X-{provider}-{org}-{project}-token.
+        Reviewer ID (Azure): header X-{provider}-{org}-{project}-reviewer-id.
+    """
+    provider = _normalize_provider(provider)
+    if provider == "azure":
+        resolved_token, no_token_msg = _effective_token(provider, org, project)
+        if not resolved_token:
+            return no_token_msg
+        resolved_reviewer_id = _effective_reviewer_id(provider, org, project)
+        if not resolved_reviewer_id:
+            header_name = _token_header_name(provider, org, project).replace("-token", "-reviewer-id").lower()
+            return f"Missing reviewer_id for reject_pr. Set header {header_name}."
+        logger.info("reject_pr: token and reviewer_id resolved for provider=%s org=%s project=%s", provider, org, project)
+        result = azure_approve_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            vote=-10,
+            reviewer_id=resolved_reviewer_id,
+        )
+        return result["message"] if result.get("success") else f"Reject failed: {result.get('message', 'Unknown error')}"
+    if provider == "github":
+        resolved_token, no_token_msg = _effective_token(provider, org, project)
+        if not resolved_token:
+            return no_token_msg
+        result = github_approve_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            vote=-10,
+        )
+        return result["message"]
+    return f"Provider '{provider}' is not implemented. Use azure or github (placeholder)."
+
+
+@mcp.tool(
+    name="create_pr",
+    description="Create a new pull request. Required: provider, org, project, repository, source_branch, target_branch, title. Optional: description. Token from header X-{provider}-{org}-{project}-token. Providers: azure, github (placeholder).",
+)
+def create_pr(
+    provider: str,
+    org: str,
+    project: str,
+    repository: str,
+    source_branch: str,
+    target_branch: str,
+    title: str,
+    description: str | None = None,
+) -> str:
+    """
+    Create a new pull request from a source branch into a target branch.
+
+    Branch names can be short (e.g. "main", "feature/xyz") or full refs (refs/heads/main); they are normalized automatically.
+
+    Parameters:
+        provider (str): Git provider. Use "azure" for Azure DevOps; "github" is placeholder.
+        org (str): Organization or account name.
+        project (str): Project name within the organization.
+        repository (str): Repository name or ID.
+        source_branch (str): Branch containing the changes (e.g. feature/xyz or refs/heads/feature/xyz).
+        target_branch (str): Branch to merge into (e.g. main or refs/heads/main).
+        title (str): Pull request title.
+        description (str, optional): Pull request description/body. Can be empty or omitted.
+
+    Returns:
+        str: Success message including the new PR ID, or error description.
+
+    Authentication:
+        Token: header X-{provider}-{org}-{project}-token.
+    """
+    provider = _normalize_provider(provider)
+    resolved_token, no_token_msg = _effective_token(provider, org, project)
+    if not resolved_token:
+        return no_token_msg
+    if provider == "azure":
+        result = azure_create_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            source_ref=source_branch,
+            target_ref=target_branch,
+            title=title,
+            description=description,
+        )
+        if result.get("success"):
+            return result["message"]
+        return f"Create PR failed: {result.get('message', 'Unknown error')}"
+    if provider == "github":
+        result = github_create_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            source_ref=source_branch,
+            target_ref=target_branch,
+            title=title,
+            description=description,
         )
         return result["message"]
     return f"Provider '{provider}' is not implemented. Use azure or github (placeholder)."
