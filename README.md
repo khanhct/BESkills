@@ -10,7 +10,7 @@ Use the **code-review** skill to review pull requests and post comments via the 
 
 ### 1. Add PR Review MCP to Cursor (SSE)
 
-Add the PR Comment MCP server so you can store tokens and post review comments to Azure DevOps (or GitHub/AWS later). Use **SSE** (Server-Sent Events) so Cursor connects to the server via a URL.
+Add the PR Comment MCP server so you can post review comments to Azure DevOps. Use **SSE** so Cursor connects via a URL. The server uses **header-only auth**: pass your PAT and (for approve/reject) reviewer ID in `mcp.json`; it does not store tokens.
 
 **1.1. Start the MCP server with SSE** (in a terminal, or run as a background service):
 
@@ -27,37 +27,29 @@ Keep this process running while using Cursor. Default port is `8080`; change `--
 - **Option A — Project config:** Create or edit `BESkills/.cursor/mcp.json` (commit to repo to share with the team).
 - **Option B — User config:** Cursor Settings → Tools & MCP → Add new MCP server (uses your user config, e.g. `~/.cursor/mcp.json`).
 
-Add an entry for the PR Comment MCP with the SSE URL. Example:
+Add an entry with the SSE URL and **keyed headers** for your Azure DevOps PAT (and reviewer ID if you use approve_pr/reject_pr):
 
 ```json
 {
   "mcpServers": {
-    "pr-comment": {
+    "code-review": {
       "url": "http://127.0.0.1:8080/sse",
       "headers": {
-        "X-User-Id": "you@company.com"
+        "X-azure-<org>-<project>-token": "YOUR_AZURE_DEVOPS_PAT",
+        "X-azure-<org>-<project>-reviewer-id": "YOUR_REVIEWER_ID_GUID"
       }
     }
   }
 }
 ```
 
-- Use the same host and port as in the `server.py` command (e.g. if you use `--port 3000`, set `"url": "http://127.0.0.1:3000/sse"`).
-- **User identity required:** Set `X-User-Id` (SSE/HTTP) in the config above, or set `USER_ID` in the server’s `env` for stdio. The server will error if neither is set when you call add_token or post_pr_comments.
-- Optional: add a token for auth: `"url": "http://127.0.0.1:8080/sse?token=YOUR_TOKEN"` (if your server validates it).
+- Replace `<org>` and `<project>` with your Azure DevOps org and project (same spelling as in the PR URL; underscores become dashes in the header). Example: org `electrolux`, project `T1` → `X-azure-electrolux-T1-token` and `X-azure-electrolux-T1-reviewer-id`.
+- Use the same host/port as in the `server.py` command (e.g. `--port 3000` → `"url": "http://127.0.0.1:3000/sse"`).
+- **Token** is required for `post_pr_comments` and `create_pr`. **Reviewer ID** is required for `approve_pr` and `reject_pr`. If a required header is missing, the tool returns an error.
 
 Restart Cursor after changing MCP config so it connects to the SSE endpoint.
 
-### 2. Store your PR token
-
-Before running reviews, store your Personal Access Token so the MCP can post comments. In Cursor, use one of these prompts:
-
-- **"Store PR token for Azure DevOps. Org: \<your-org\>, Project: \<your-project\>, Token: \<paste PAT\>."**
-- Or: **"Use the add_token tool to store an Azure DevOps PAT for org \<org\> and project \<project\>. Token: \<PAT\>."**
-
-You must pass a user identity when storing the token (or have `X-User-Id` / `USER_ID` set as in step 1).
-
-### 3. Copy the code-review skill to Cursor skills folder
+### 2. (Optional) Copy the code-review skill to Cursor skills folder
 
 Copy the `code-review` folder into your Cursor skills directory so Cursor can load the skill:
 
@@ -82,7 +74,7 @@ cp -R ./code-review ~/.cursor/skills/code-review
 
 Ensure the folder contains `SKILL.md` and the `references/` subfolder (e.g. `checklists.md`, `pr-comment-format.md`).
 
-### 4. Create `repos` folder and clone projects
+### 3. Create `repos` folder and clone projects
 
 Create a `repos` directory (e.g. next to the BESkills repo or inside it) and clone every repository that may be reviewed:
 
@@ -103,7 +95,7 @@ git clone <clone-url-for-repo-1>
 git clone <clone-url-for-repo-2>
 ```
 
-### 5. Update repository mapping in SKILL.md
+### 4. Update repository mapping in SKILL.md
 
 Edit the **Repository Mapping** table in the skill’s `SKILL.md`. Use the **copied** skill file under `.cursor\skills\code-review\SKILL.md` (or the one in this repo if you prefer to edit here and re-copy).
 
@@ -120,7 +112,7 @@ Paths are relative to the workspace root where you run the review, or use absolu
 
 ## Code Review — Prompts
 
-After setup (including storing your PR token in step 2), use these prompts in Cursor.
+After setup (token and optional reviewer ID in `mcp.json` from step 1), use these prompts in Cursor.
 
 ### Review a pull request
 
@@ -138,9 +130,11 @@ The agent will:
 1. Use the code-review skill (workflow, evaluation criteria, checklists).
 2. Pull latest target and PR branches, compute the diff, and review changed files.
 3. Produce a comments JSON file named `{pr_id}.json` (e.g. `123.json` for PR 123).
-4. If the PR Comment MCP is enabled and a token is stored, you can ask to post those comments to the PR (see **Post PR comments** below).
+4. If the PR Comment MCP is enabled and the token header is set in `mcp.json`, you can ask to post those comments to the PR (see **Post PR comments** below).
 
 For **Azure DevOps**, the PR link usually contains org, project, repo, and pull request ID; the agent can infer them or you can specify: “Post these comments to Azure DevOps org X, project Y, repository Z, PR 123.”
+
+**All-in-one (review + post):** Use the prompt file [code-review/prompts/review-and-post-pr.md](code-review/prompts/review-and-post-pr.md): it runs the code-review skill, then checks the output JSON and posts comments only if the file contains any threads.
 
 ### Post PR comments
 
@@ -158,5 +152,5 @@ You may need to specify provider, org, project, repository, and pull request ID 
 
 ## Repo structure
 
-- **`code-review/`** — Code review skill (`SKILL.md` + `references/`). Copy to `.cursor/skills/code-review/`.
-- **`mcp/code_reviewer/`** — MCP server that stores PATs and posts PR comment threads. See `mcp/code_reviewer/README.md` for tools and Azure DevOps PAT scope.
+- **`code-review/`** — Code review skill (`SKILL.md` + `references/` + `prompts/`). Copy to `.cursor/skills/code-review/`.
+- **`mcp/code_reviewer/`** — MCP server for posting PR comment threads, approving/rejecting PRs, and creating PRs. Uses header-only auth (token and reviewer ID in `mcp.json`). See `mcp/code_reviewer/README.md` for tools and Azure DevOps PAT scope.
