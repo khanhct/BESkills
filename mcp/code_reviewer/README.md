@@ -53,19 +53,14 @@ uv run uvicorn run:app --host 0.0.0.0 --port 8000 --reload   # development
 
 ## Environment
 
-The server **does not store tokens**. Tokens are keyed by **provider, org, and project**.
+The server **does not store tokens**. Only keyed headers are supported (no env, no fallback).
 
-**Key format:** `{provider}_{org}_{project}_token` — e.g. `azure_devops_electrolux_T1_token`.
+| Header | Format | Example |
+|--------|--------|---------|
+| **Token** | `X-{provider}-{org}-{project}-token` | `X-azure-electrolux-T1-token: <PAT>` |
+| **Reviewer ID** (for approve_pr) | `X-{provider}-{org}-{project}-reviewer-id` | `X-azure-electrolux-T1-reviewer-id: <GUID>` |
 
-| Source | Format |
-|--------|--------|
-| **SSE/HTTP** | Header **`X-{provider}-{org}-{project}-token`** (e.g. `X-azure-devops-electrolux-T1-token: <PAT>`). Underscores in provider/org/project become dashes in the header. Multiple keys = multiple headers. |
-| **SSE/HTTP (alt)** | Header `X-PR-Comment-Tokens` with a JSON object: `{"azure_devops_electrolux_T1_token": "<PAT>", ...}`. |
-| **stdio** | One env var per key: `PR_COMMENT_<KEY_UPPERCASED>` — e.g. `PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN=<PAT>`. |
-| **Fallback** | Single token: header `Authorization: Bearer <PAT>` or `X-PR-Comment-Token`, or env `PR_COMMENT_TOKEN`. Used when the keyed lookup is missing. |
-| **Tool param** | Optional `token` argument on `post_pr_comments` / `approve_pr` overrides lookup for that call. |
-
-No X-User-Id or user identity is required.
+If the required header is not sent, the tool returns an error. Underscores in provider/org/project become dashes in the header.
 
 ## Cursor MCP configuration
 
@@ -77,74 +72,38 @@ Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project
    ```bash
    uv run python server.py --transport sse --host 127.0.0.1 --port 8080
    ```
-2. In `mcp.json`, pass tokens via the keyed header (or use fallback for a single token):
+2. In `mcp.json`, pass token and reviewer-id via keyed headers only:
    ```json
    {
      "mcpServers": {
        "code-review": {
          "url": "http://127.0.0.1:8080/sse",
          "headers": {
-           "X-azure-devops-electrolux-T1-token": "YOUR_AZURE_DEVOPS_PAT"
+          "X-azure-electrolux-T1-token": "YOUR_AZURE_DEVOPS_PAT",
+          "X-azure-electrolux-T1-reviewer-id": "YOUR_REVIEWER_ID_GUID"
          }
        }
      }
    }
    ```
-   **Alternative (multiple keys):** `"X-PR-Comment-Tokens": "{\"azure_devops_electrolux_T1_token\": \"YOUR_PAT\"}"`. **Fallback (single token):** `"Authorization": "Bearer YOUR_PAT"` or `"X-PR-Comment-Token": "YOUR_PAT"`.
 
-**Option B — stdio with uv:**
+**Option B — stdio with uv:** Not supported; token/reviewer-id must be passed via SSE/HTTP headers. Run the server with `--transport sse` and use Option A.
 
-Set the token via the keyed env var (or fallback `PR_COMMENT_TOKEN` for a single provider/org/project):
-
-```json
-{
-  "mcpServers": {
-    "code-review": {
-      "command": "uv",
-      "args": ["run", "fastmcp", "run", "server.py"],
-      "cwd": "C:/path/to/BESkills/mcp/code_reviewer",
-      "env": {
-        "PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN": "YOUR_AZURE_DEVOPS_PAT"
-      }
-    }
-  }
-}
-```
-
-Fallback: use `PR_COMMENT_TOKEN` for a single token. Do not commit PATs; use a secret manager or local-only env.
-
-**Option C — stdio with system Python** (install deps first with `uv sync` or `pip install -e .`):
-
-```json
-{
-  "mcpServers": {
-    "code-review": {
-      "command": "python",
-      "args": ["-m", "fastmcp", "run", "C:/path/to/BESkills/mcp/code_reviewer/server.py"],
-      "cwd": "C:/path/to/BESkills/mcp/code_reviewer",
-      "env": {
-        "PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN": "YOUR_AZURE_DEVOPS_PAT"
-      }
-    }
-  }
-}
-```
-
-Adjust `cwd` and paths to your machine.
+**Option C — stdio with system Python:** Same as Option B; use SSE + headers.
 
 ## Tools
 
 ### post_pr_comments
 
-Post comment threads to a pull request. Token is resolved by key `{provider}_{org}_{project}_token` from header **`X-{provider}-{org}-{project}-token`** (e.g. `X-azure-devops-electrolux-T1-token`) or `X-PR-Comment-Tokens` (JSON), or env `PR_COMMENT_<KEY_UPPERCASED>`; fallback: `Authorization: Bearer` / `X-PR-Comment-Token` / `PR_COMMENT_TOKEN`; or pass optional `token` parameter.
+Post comment threads to a pull request. Token must be in header **`X-{provider}-{org}-{project}-token`** (e.g. `X-azure-electrolux-T1-token`). No fallbacks.
 
-- **provider**: `azure_devops` (required for now).
+- **provider**: `azure` (Azure DevOps) or `github` (placeholder).
 - **org**: Organization name.
 - **project**: Project name (Azure DevOps).
 - **repository**: Repository name or GUID.
 - **pull_request_id**: PR number (integer).
 - **comments_body**: JSON string — array of thread objects. Each thread must have exactly one comment, `status: 1`, and `threadContext` with `filePath` (leading `/`), `rightFileStart`, `rightFileEnd`. See [pr-comment-format.md](../../code-review/references/pr-comment-format.md).
-- **token** (optional): PAT for this call. Omit to use keyed header/env or fallback.
+- **token**: From header `X-{provider}-{org}-{project}-token` only (no param).
 
 Example `comments_body`:
 
@@ -164,4 +123,4 @@ Example `comments_body`:
 
 ## Azure DevOps PAT
 
-Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Pass it via header **`X-azure-devops-<org>-<project>-token`** or `X-PR-Comment-Tokens` (JSON), or env `PR_COMMENT_AZURE_DEVOPS_<ORG>_<PROJECT>_TOKEN=<PAT>`. Fallback: `Authorization: Bearer <PAT>`, `X-PR-Comment-Token`, or `PR_COMMENT_TOKEN`. The server does not store tokens.
+Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Pass it only via header **`X-azure-<org>-<project>-token`**. For approve_pr, also set **`X-azure-<org>-<project>-reviewer-id`** to your identity GUID. No env or fallback. The server does not store tokens.

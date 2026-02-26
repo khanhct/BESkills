@@ -98,40 +98,29 @@ def approve_pull_request(
     repository: str,
     pull_request_id: int,
     vote: int = 10,
+    reviewer_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Approve a pull request (set reviewer vote for the authenticated user).
+    Approve a pull request (set reviewer vote).
 
-    Uses ConnectionData to get the current user's identity id, then PUT to the
-    Pull Request Reviewers API with vote (10 = approved, 5 = approved with suggestions,
-    0 = no vote, -5 = waiting for author, -10 = rejected).
+    reviewer_id is required: pass it via header X-{provider}-{org}-{project}-reviewer-id or
+    X-PR-Reviewer-Id, or via the tool param. PUT to the Pull Request Reviewers API with
+    vote (10 = approved, 5 = approved with suggestions, 0 = no vote, -5 = waiting for author,
+    -10 = rejected).
 
     Returns:
         {"success": bool, "message": str}
     """
+    if not reviewer_id or not str(reviewer_id).strip():
+        return {
+            "success": False,
+            "message": "reviewer_id is required. Set header X-{provider}-{org}-{project}-reviewer-id or X-PR-Reviewer-Id, or pass the reviewer_id parameter.",
+        }
+    reviewer_id = str(reviewer_id).strip()
     headers = {
         **_auth_header(token),
         "Content-Type": "application/json",
     }
-    # Get current user id from connection data
-    connection_url = f"{BASE_URL}/{org}/_apis/connectiondata?api-version={API_VERSION}"
-    try:
-        conn_resp = requests.get(connection_url, headers=headers, timeout=30)
-        if conn_resp.status_code != 200:
-            return {
-                "success": False,
-                "message": f"Failed to get current user: HTTP {conn_resp.status_code}. Check PAT and org.",
-            }
-        conn_data = conn_resp.json()
-        authenticated_user = conn_data.get("authenticatedUser") or conn_data.get("authorizedUser")
-        if not authenticated_user:
-            return {"success": False, "message": "ConnectionData did not return authenticated user."}
-        reviewer_id = authenticated_user.get("id")
-        if not reviewer_id:
-            return {"success": False, "message": "Authenticated user has no id."}
-    except requests.RequestException as e:
-        return {"success": False, "message": f"Failed to get current user: {e}"}
-
     url = (
         f"{BASE_URL}/{org}/{project}/_apis/git/repositories/{repository}"
         f"/pullRequests/{pull_request_id}/reviewers/{reviewer_id}?api-version={API_VERSION}"

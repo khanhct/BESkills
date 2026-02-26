@@ -15,7 +15,7 @@ def post_threads(
     threads: list[dict[str, Any]],
     project: str | None = None,
 ) -> dict[str, Any]:
-    """Not implemented. Use azure_devops for now."""
+    """Not implemented. Use azure for now."""
     return {
         "created": 0,
         "errors": [{"index": 0, "message": "AWS CodeCommit provider is not implemented yet."}],
