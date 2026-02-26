@@ -53,11 +53,18 @@ uv run uvicorn run:app --host 0.0.0.0 --port 8000 --reload   # development
 
 ## Environment
 
-| Variable | Description |
-|----------|-------------|
-| `PR_COMMENT_CREDENTIALS_PATH` | Full path to the credentials JSON file. Default: `~/.pr-comment-mcp/credentials.json` |
+The server **does not store tokens**. Tokens are keyed by **provider, org, and project**.
 
-Credentials are stored in a JSON file with restrictive permissions (0o600). **Do not commit this file or place it under version control.**
+**Key format:** `{provider}_{org}_{project}_token` — e.g. `azure_devops_electrolux_T1_token`.
+
+| Source | Format |
+|--------|--------|
+| **SSE/HTTP** | Header `X-PR-Comment-Tokens` with a JSON object: `{"azure_devops_electrolux_T1_token": "<PAT>", ...}`. One key per provider/org/project. |
+| **stdio** | One env var per key: `PR_COMMENT_<KEY_UPPERCASED>` — e.g. `PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN=<PAT>`. |
+| **Fallback** | Single token (backward compatible): header `Authorization: Bearer <PAT>` or `X-PR-Comment-Token`, or env `PR_COMMENT_TOKEN`. Used when the keyed lookup is missing. |
+| **Tool param** | Optional `token` argument on `post_pr_comments` overrides lookup for that call. |
+
+No X-User-Id or user identity is required.
 
 ## Cursor MCP configuration
 
@@ -69,70 +76,66 @@ Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project
    ```bash
    uv run python server.py --transport sse --host 127.0.0.1 --port 8080
    ```
-2. In `mcp.json`:
+2. In `mcp.json`, pass tokens via the keyed header (or use fallback for a single token):
    ```json
    {
      "mcpServers": {
-       "pr-comment": {
-         "url": "http://127.0.0.1:8080/sse"
+       "code-review": {
+         "url": "http://127.0.0.1:8080/sse",
+         "headers": {
+           "X-PR-Comment-Tokens": "{\"azure_devops_electrolux_T1_token\": \"YOUR_AZURE_DEVOPS_PAT\"}"
+         }
        }
      }
    }
    ```
-   Use the same host/port as in the run command. Restart Cursor after changing config.
+   **Fallback (single token):** You can instead set `"Authorization": "Bearer YOUR_PAT"` or `"X-PR-Comment-Token": "YOUR_PAT"` if you only need one provider/org/project. Use the same host/port as in the run command. Restart Cursor after changing config.
 
 **Option B — stdio with uv:**
+
+Set the token via the keyed env var (or fallback `PR_COMMENT_TOKEN` for a single provider/org/project):
 
 ```json
 {
   "mcpServers": {
-    "pr-comment": {
+    "code-review": {
       "command": "uv",
       "args": ["run", "fastmcp", "run", "server.py"],
       "cwd": "C:/path/to/BESkills/mcp/code_reviewer",
-      "env": {}
+      "env": {
+        "PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN": "YOUR_AZURE_DEVOPS_PAT"
+      }
     }
   }
 }
 ```
+
+Fallback: use `PR_COMMENT_TOKEN` for a single token. Do not commit PATs; use a secret manager or local-only env.
 
 **Option C — stdio with system Python** (install deps first with `uv sync` or `pip install -e .`):
 
 ```json
 {
   "mcpServers": {
-    "pr-comment": {
+    "code-review": {
       "command": "python",
       "args": ["-m", "fastmcp", "run", "C:/path/to/BESkills/mcp/code_reviewer/server.py"],
       "cwd": "C:/path/to/BESkills/mcp/code_reviewer",
-      "env": {}
+      "env": {
+        "PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN": "YOUR_AZURE_DEVOPS_PAT"
+      }
     }
   }
 }
 ```
 
-Adjust `cwd` and paths to your machine. To override the credentials file:
-
-```json
-"env": {
-  "PR_COMMENT_CREDENTIALS_PATH": "C:/path/to/my-credentials.json"
-}
-```
+Adjust `cwd` and paths to your machine.
 
 ## Tools
 
-### pr_comment_add_token
+### post_pr_comments
 
-Store a PAT/token for a provider and organization (and optional project for Azure DevOps).
-
-- **provider**: `azure_devops` (supported), `github`, `aws` (stubs).
-- **org**: Organization name (e.g. Azure DevOps org).
-- **token**: Personal access token or secret to store.
-- **project**: Optional. For Azure DevOps, project name or ID (can use one org-level PAT and omit project, or store per-project).
-
-### pr_comment_post
-
-Post comment threads to a pull request.
+Post comment threads to a pull request. Token is resolved by key `{provider}_{org}_{project}_token` from header `X-PR-Comment-Tokens` (JSON) or env `PR_COMMENT_<KEY_UPPERCASED>`; fallback: `Authorization: Bearer` / `X-PR-Comment-Token` / `PR_COMMENT_TOKEN`; or pass optional `token` parameter.
 
 - **provider**: `azure_devops` (required for now).
 - **org**: Organization name.
@@ -140,6 +143,7 @@ Post comment threads to a pull request.
 - **repository**: Repository name or GUID.
 - **pull_request_id**: PR number (integer).
 - **comments_body**: JSON string — array of thread objects. Each thread must have exactly one comment, `status: 1`, and `threadContext` with `filePath` (leading `/`), `rightFileStart`, `rightFileEnd`. See [pr-comment-format.md](../../code-review/references/pr-comment-format.md).
+- **token** (optional): PAT for this call. Omit to use keyed header/env or fallback.
 
 Example `comments_body`:
 
@@ -159,4 +163,4 @@ Example `comments_body`:
 
 ## Azure DevOps PAT
 
-Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Use `pr_comment_add_token` to store it for the desired org (and optionally project).
+Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Pass it using the keyed format: header `X-PR-Comment-Tokens: {"azure_devops_<org>_<project>_token": "<PAT>"}` or env `PR_COMMENT_AZURE_DEVOPS_<ORG>_<PROJECT>_TOKEN=<PAT>`. Fallback: `Authorization: Bearer <PAT>`, `X-PR-Comment-Token`, or `PR_COMMENT_TOKEN`. The server does not store tokens.

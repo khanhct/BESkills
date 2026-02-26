@@ -64,7 +64,7 @@ For each truly changed file and each diffed hunk, evaluate the changes in the co
 
 ## Output
 
-The **only** output of a code review is a **comments JSON file**. Write it to a single file named **`{pr_id}.json`** (e.g. `123.json` for PR 123), whose root is an **array** of thread objects. If there are any comments, include them as thread objects; if there are none, write an empty array `[]`. Do not produce a markdown report or any other output format. Full schema and examples: [references/pr-comment-format.md](references/pr-comment-format.md).
+The **only** output of a code review is a **comments JSON file**. Write it to **`code-review/{pr_id}.json`** (e.g. `code-review/123.json` for PR 123), whose root is an **array** of thread objects. If there are any comments, include them as thread objects; if there are none, write an empty array `[]`. Do not produce a markdown report or any other output format. Full schema and examples: [references/pr-comment-format.md](references/pr-comment-format.md).
 
 ### Format rules
 - **Only add a comment when confident** — Skip unclear, stylistic, or low-value observations.

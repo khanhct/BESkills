@@ -1,0 +1,25 @@
+{
+    "mcpServers": {
+      "context7": {
+        "url": "https://mcp.context7.com/mcp",
+        "headers": {
+          "CONTEXT7_API_KEY": "your_api_key"
+        }
+      },
+      "mcp-atlassian": {
+        "command": "uvx",
+        "args": ["mcp-atlassian"],
+        "env": {
+          "JIRA_URL": "https://your_jira_url.com",
+          "JIRA_SSL_VERIFY": "false",
+          "JIRA_PERSONAL_TOKEN": "your_api_token",
+          "CONFLUENCE_URL": "https://your_confluence_url.com/spaces",
+          "CONFLUENCE_SSL_VERIFY": "false",
+          "CONFLUENCE_PERSONAL_TOKEN": "your_api_token"
+        }
+      }
+    }
+  }
+  
+  
+  

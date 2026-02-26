@@ -2,13 +2,14 @@
 PR Comment MCP Server — post review comments to PRs (Azure DevOps, GitHub, AWS).
 
 Tools:
-- pr_comment_add_token: Store a PAT/token for a provider and org (optional project).
-- pr_comment_post: Post a JSON array of comment threads to a PR (pr-comment-format.md).
+- post_pr_comments: Post a JSON array of comment threads to a PR (pr-comment-format.md).
+- approve_pr: Approve a pull request (set reviewer vote). Azure DevOps: vote 10 = approved; GitHub placeholder.
 
-Multi-user: user identity is required. Pass user_id, or set X-User-Id header (SSE/HTTP), or USER_ID env (stdio). Returns an error if none is set.
+Token is keyed by provider/org/project: key format {provider}_{org}_{project}_token. Pass tokens via X-PR-Comment-Tokens JSON header (SSE/HTTP), or env PR_COMMENT_<KEY_UPPERCASED> (stdio), or optional token parameter. Fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN. No X-User-Id required.
 """
 import argparse
 import asyncio
+import json
 import os
 from contextvars import ContextVar
 
@@ -19,99 +20,111 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from providers import token_store
 from providers.azure_devops import post_threads as azure_post_threads
+from providers.azure_devops import approve_pull_request as azure_approve_pr
+from providers.github import post_threads as github_post_threads
+from providers.github import approve_pull_request as github_approve_pr
 from validation import validate_comments_body
 
-# Set by middleware from X-User-Id header (SSE/HTTP). None when not set or stdio.
-_current_user_id_from_header: ContextVar[str | None] = ContextVar(
-    "current_user_id_from_header", default=None
+# Set by middleware: keyed tokens from X-PR-Comment-Tokens JSON (SSE/HTTP).
+_tokens_from_header: ContextVar[dict[str, str]] = ContextVar(
+    "tokens_from_header", default={}
 )
+# Set by middleware: single token from Authorization: Bearer or X-PR-Comment-Token (fallback).
+_fallback_token_from_header: ContextVar[str | None] = ContextVar(
+    "fallback_token_from_header", default=None
+)
+
+TOKEN_ENV_PREFIX = "PR_COMMENT_"
+
+
+def _token_key(provider: str, org: str, project: str) -> str:
+    """Key format: {provider}_{org}_{project}_token. Project may be empty."""
+    return f"{provider}_{org}_{project}_token"
+
+
+def _no_token_msg(provider: str, org: str, project: str) -> str:
+    key = _token_key(provider, org, project)
+    env_name = TOKEN_ENV_PREFIX + key.upper()
+    return (
+        f"No token provided for {provider}/{org}/{project}. "
+        f"Set X-PR-Comment-Tokens header with key \"{key}\", or env {env_name}, "
+        f"or fallback Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN, or pass the token parameter."
+    )
+
 
 mcp = FastMCP(
     name="pr-comment",
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
-    instructions="Post PR review comments to Azure DevOps (and later GitHub, AWS). Use add_token to store a PAT. User identity required: pass user_id, or set X-User-Id header (SSE/HTTP), or USER_ID env (stdio). Then post_pr_comments to post comment threads.",
+    instructions="Post PR review comments (post_pr_comments) or approve PRs (approve_pr) for Azure DevOps and GitHub (placeholder). Token key format: {provider}_{org}_{project}_token. Pass via X-PR-Comment-Tokens JSON header or env PR_COMMENT_<KEY_UPPERCASED>; fallback: Authorization: Bearer / PR_COMMENT_TOKEN.",
 )
 
 
-USER_ID_REQUIRED_MSG = (
-    "User identity required. Set X-User-Id header (SSE/HTTP), USER_ID environment variable, or pass user_id in the request."
-)
+def _effective_token(provider: str, org: str, project: str, token_param: str | None) -> tuple[str | None, str]:
+    """
+    Resolve token: (1) token_param, (2) keyed header/env, (3) fallback header/env.
+    Returns (token, error_message). If token is non-None, error_message is empty.
+    """
+    if token_param and str(token_param).strip():
+        return str(token_param).strip(), ""
+    key = _token_key(provider, org, project)
+    # Keyed lookup from header
+    tokens_dict = _tokens_from_header.get()
+    if isinstance(tokens_dict, dict) and key in tokens_dict:
+        val = tokens_dict[key]
+        if val and str(val).strip():
+            return str(val).strip(), ""
+    # Keyed env
+    env_name = TOKEN_ENV_PREFIX + key.upper()
+    env_val = os.environ.get(env_name)
+    if env_val and str(env_val).strip():
+        return str(env_val).strip(), ""
+    # Fallback: single header
+    fallback = _fallback_token_from_header.get()
+    if fallback and str(fallback).strip():
+        return str(fallback).strip(), ""
+    # Fallback env
+    fallback_env = os.environ.get("PR_COMMENT_TOKEN")
+    if fallback_env and str(fallback_env).strip():
+        return str(fallback_env).strip(), ""
+    return None, _no_token_msg(provider, org, project)
 
 
-def _effective_user_id(user_id: str | None) -> str | None:
-    """Resolve user_id: explicit arg, else X-User-Id header (SSE/HTTP), else USER_ID env. Returns None if none is set."""
-    if user_id and str(user_id).strip():
-        return str(user_id).strip()
-    from_header = _current_user_id_from_header.get()
-    if from_header and str(from_header).strip():
-        return str(from_header).strip()
-    env_user = os.environ.get("USER_ID")
-    if env_user and str(env_user).strip():
-        return str(env_user).strip()
-    return None
-
-
-class XUserIdMiddleware(BaseHTTPMiddleware):
-    """Set request-scoped user id from X-User-Id header for SSE/HTTP transports."""
+class TokenFromHeaderMiddleware(BaseHTTPMiddleware):
+    """Set request-scoped tokens from X-PR-Comment-Tokens (JSON) or fallback Authorization: Bearer / X-PR-Comment-Token."""
 
     async def dispatch(self, request, call_next):
-        raw = request.headers.get("X-User-Id")
-        value = raw.strip() if raw and raw.strip() else None
-        token = _current_user_id_from_header.set(value)
+        tokens_dict: dict[str, str] = {}
+        fallback: str | None = None
+        raw_json = request.headers.get("X-PR-Comment-Tokens")
+        if raw_json and raw_json.strip():
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict):
+                    tokens_dict = {k: str(v) for k, v in parsed.items() if v is not None and str(v).strip()}
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not tokens_dict:
+            auth = request.headers.get("Authorization")
+            if auth and auth.startswith("Bearer "):
+                fallback = auth[7:].strip()
+            if not fallback:
+                raw = request.headers.get("X-PR-Comment-Token")
+                fallback = raw.strip() if raw and raw.strip() else None
+        tok_ctx = _tokens_from_header.set(tokens_dict)
+        fallback_ctx = _fallback_token_from_header.set(fallback)
         try:
             return await call_next(request)
         finally:
-            _current_user_id_from_header.reset(token)
-
-
-@mcp.tool(
-    name="add_token",
-    description="Store a PAT/token for a provider and organization. Optional project for Azure DevOps; optional user_id for multi-user (else X-User-Id header or USER_ID env required). Supported providers: azure_devops, github, aws.",
-)
-def add_token(
-    provider: str,  # The provider to store the token for (e.g., 'azure_devops', 'github', 'aws'). Case-sensitive.
-    org: str,       # The organization or account name. For Azure DevOps, this is the organization.
-    token: str,     # The personal access token (PAT) or secret to store.
-    project: str | None = None,  # (Optional) The project within the organization. Required for some providers like Azure DevOps.
-    user_id: str | None = None,  # (Optional) User identifier to scope the token. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is required.
-) -> str:
-    """
-    Add or update token for the given provider, org, and optional project and user_id.
-
-    Parameters:
-        provider (str): The provider to store the token for (should be one of: 'azure_devops', 'github', 'aws').
-        org (str): The organization or account name for which the token is stored.
-        token (str): The personal access token (PAT) or authentication token value.
-        project (str, optional): The project within the organization. This is required for Azure DevOps, but optional/ignored for other providers.
-        user_id (str, optional): User identifier for multi-user isolation. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env (required if omitted).
-
-    Returns:
-        str: A result message indicating success or details of any error encountered.
-    """
-    try:
-        effective_user = _effective_user_id(user_id)
-        if effective_user is None:
-            return USER_ID_REQUIRED_MSG
-        token_store.set_token(provider, org, token, project, user_id=effective_user)
-        parts = [provider, org]
-        if project:
-            parts.append(project)
-        msg = "Token stored for " + " / ".join(parts)
-        msg += f" (user: {effective_user})"
-        return msg + "."
-    except ValueError as e:
-        return str(e)
-    except OSError as e:
-        return f"Failed to write credentials file: {e}"
+            _tokens_from_header.reset(tok_ctx)
+            _fallback_token_from_header.reset(fallback_ctx)
 
 
 @mcp.tool(
     name="post_pr_comments",
-    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure), repository, pull_request_id, comments_body. Optional user_id (else X-User-Id header or USER_ID env required).",
+    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure; may be empty for GitHub), repository, pull_request_id, comments_body. Optional: token (else keyed X-PR-Comment-Tokens / env PR_COMMENT_<KEY> or fallback). Providers: azure_devops, github (placeholder). Token key format: {provider}_{org}_{project}_token.",
 )
 def post_pr_comments(
     provider: str,      # The provider to use for posting comments (e.g., 'azure_devops'). Case-sensitive.
@@ -120,47 +133,56 @@ def post_pr_comments(
     repository: str,    # The name or identifier of the repository to post comments to.
     pull_request_id: int,   # The numeric ID of the pull request to comment on.
     comments_body: str,     # JSON string: array of thread objects as described in pr-comment-format.md; each includes comments and location.
-    user_id: str | None = None,  # (Optional) User identifier whose token to use. If omitted, X-User-Id header (SSE/HTTP) or USER_ID env is required.
+    token: str | None = None,  # (Optional) PAT for this call. If omitted, use keyed header/env or fallback.
 ) -> str:
     """
     Post PR comments to the given repository and pull request.
 
     Parameters:
-        provider (str): The provider to use for posting comments ('azure_devops', 'github', or 'aws').
-        org (str): The organization or account name in the provider. For Azure DevOps, this is the organization name.
-        project (str): The project name, required for Azure DevOps. Ignored for other providers.
-        repository (str): The target repository name or identifier for the pull request.
-        pull_request_id (int): The numeric ID of the pull request to post comments on.
-        comments_body (str): JSON string representing an array of comment thread objects (see pr-comment-format.md for format).
-        user_id (str, optional): User identifier for token lookup. Omit to use X-User-Id header (SSE/HTTP) or USER_ID env (required if omitted).
+        provider (str): The provider to use for posting comments (e.g., 'azure_devops'). Case-sensitive.
+        org (str): The organization or account name in the provider (for Azure DevOps, the organization name).
+        project (str): The project within the organization (for Azure DevOps; may be ignored by other providers).
+        repository (str): The name or identifier of the repository to post comments to.
+        pull_request_id (int): The numeric ID of the pull request to comment on.
+        comments_body (str): JSON string: array of thread objects as described in pr-comment-format.md; each includes comments and location.
+        token (str, optional): Personal Access Token (PAT) for this call. If omitted, uses keyed header/env or fallback.
 
     Returns:
-        str: A summary of created threads and any errors encountered.
+        str: Result message describing the actions taken (created threads, validation errors, or token errors).
+
+    Token resolution:
+      - Uses key {provider}_{org}_{project}_token from X-PR-Comment-Tokens header or env PR_COMMENT_<KEY_UPPERCASED>
+      - Fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN
+      - Or, use the explicit 'token' parameter to override
     """
-    if provider != "azure_devops":
-        return f"Provider '{provider}' is not implemented yet. Use azure_devops."
-    effective_user = _effective_user_id(user_id)
-    if effective_user is None:
-        return USER_ID_REQUIRED_MSG
-    token = token_store.get_token(provider, org, project, user_id=effective_user)
-    if not token:
-        # Try org-level token without project
-        token = token_store.get_token(provider, org, None, user_id=effective_user)
-    if not token:
-        return "No token found. Use add_token for this provider/org (and project if needed). Use the same user (user_id, X-User-Id header, or USER_ID env) when posting."
+    resolved_token, no_token_msg = _effective_token(provider, org, project, token)
+    if not resolved_token:
+        return no_token_msg
     threads, validation_errors = validate_comments_body(comments_body)
     if validation_errors:
         return "Validation failed:\n" + "\n".join(validation_errors)
     if not threads:
         return "No valid threads to post (empty array or all invalid)."
-    result = azure_post_threads(
-        token=token,
-        org=org,
-        project=project,
-        repository=repository,
-        pull_request_id=pull_request_id,
-        threads=threads,
-    )
+    if provider == "azure_devops":
+        result = azure_post_threads(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            threads=threads,
+        )
+    elif provider == "github":
+        result = github_post_threads(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            threads=threads,
+        )
+    else:
+        return f"Provider '{provider}' is not implemented. Use azure_devops or github (placeholder)."
     created = result["created"]
     errors = result["errors"]
     msg = f"Created {created} thread(s)."
@@ -169,15 +191,61 @@ def post_pr_comments(
     return msg
 
 
+@mcp.tool(
+    name="approve_pr",
+    description="Approve a pull request (set reviewer vote for the authenticated user). Required: provider, org, project (may be empty for GitHub), repository, pull_request_id. Optional: vote (10=approved, 5=approved with suggestions, 0=no vote, -5=waiting for author, -10=rejected; default 10), token. Providers: azure_devops, github (placeholder). Same token key format as post_pr_comments.",
+)
+def approve_pr(
+    provider: str,
+    org: str,
+    project: str,
+    repository: str,
+    pull_request_id: int,
+    vote: int = 10,
+    token: str | None = None,
+) -> str:
+    """
+    Approve a pull request. Uses the same token resolution as post_pr_comments.
+    For Azure DevOps, gets the current user from ConnectionData and sets their vote on the PR.
+    """
+    if provider == "azure_devops":
+        resolved_token, no_token_msg = _effective_token(provider, org, project, token)
+        if not resolved_token:
+            return no_token_msg
+        result = azure_approve_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            vote=vote,
+        )
+        return result["message"] if result.get("success") else f"Approve failed: {result.get('message', 'Unknown error')}"
+    if provider == "github":
+        resolved_token, no_token_msg = _effective_token(provider, org, project, token)
+        if not resolved_token:
+            return no_token_msg
+        result = github_approve_pr(
+            token=resolved_token,
+            org=org,
+            project=project,
+            repository=repository,
+            pull_request_id=pull_request_id,
+            vote=vote,
+        )
+        return result["message"]
+    return f"Provider '{provider}' is not implemented. Use azure_devops or github (placeholder)."
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     return JSONResponse({"status": "ok"})
 
 
 async def run_sse_with_cors():
-    """Custom SSE transport with CORS and X-User-Id header support."""
+    """Custom SSE transport with CORS and keyed token header support."""
     sse_app = mcp.sse_app()
-    sse_app.add_middleware(XUserIdMiddleware)
+    sse_app.add_middleware(TokenFromHeaderMiddleware)
     sse_app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -197,9 +265,9 @@ async def run_sse_with_cors():
 
 
 async def run_http_with_cors():
-    """Custom HTTP transport with CORS and X-User-Id header support."""
+    """Custom HTTP transport with CORS and keyed token header support."""
     http_app = mcp.streamable_http_app()
-    http_app.add_middleware(XUserIdMiddleware)
+    http_app.add_middleware(TokenFromHeaderMiddleware)
     http_app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -269,9 +337,13 @@ async def main():
         await run_http_with_cors()
 
 
-if __name__ == "__main__":
-
+def run() -> None:
+    """Entry point for the console script (e.g. code-reviewer-mcp)."""
     try:
         asyncio.run(main())
     except Exception as e:
         raise
+
+
+if __name__ == "__main__":
+    run()
