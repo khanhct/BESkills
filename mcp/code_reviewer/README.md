@@ -59,10 +59,11 @@ The server **does not store tokens**. Tokens are keyed by **provider, org, and p
 
 | Source | Format |
 |--------|--------|
-| **SSE/HTTP** | Header `X-PR-Comment-Tokens` with a JSON object: `{"azure_devops_electrolux_T1_token": "<PAT>", ...}`. One key per provider/org/project. |
+| **SSE/HTTP** | Header **`X-{provider}-{org}-{project}-token`** (e.g. `X-azure-devops-electrolux-T1-token: <PAT>`). Underscores in provider/org/project become dashes in the header. Multiple keys = multiple headers. |
+| **SSE/HTTP (alt)** | Header `X-PR-Comment-Tokens` with a JSON object: `{"azure_devops_electrolux_T1_token": "<PAT>", ...}`. |
 | **stdio** | One env var per key: `PR_COMMENT_<KEY_UPPERCASED>` — e.g. `PR_COMMENT_AZURE_DEVOPS_ELECTROLUX_T1_TOKEN=<PAT>`. |
-| **Fallback** | Single token (backward compatible): header `Authorization: Bearer <PAT>` or `X-PR-Comment-Token`, or env `PR_COMMENT_TOKEN`. Used when the keyed lookup is missing. |
-| **Tool param** | Optional `token` argument on `post_pr_comments` overrides lookup for that call. |
+| **Fallback** | Single token: header `Authorization: Bearer <PAT>` or `X-PR-Comment-Token`, or env `PR_COMMENT_TOKEN`. Used when the keyed lookup is missing. |
+| **Tool param** | Optional `token` argument on `post_pr_comments` / `approve_pr` overrides lookup for that call. |
 
 No X-User-Id or user identity is required.
 
@@ -83,13 +84,13 @@ Add the server to Cursor (Settings → MCP, or `.cursor/mcp.json` in the project
        "code-review": {
          "url": "http://127.0.0.1:8080/sse",
          "headers": {
-           "X-PR-Comment-Tokens": "{\"azure_devops_electrolux_T1_token\": \"YOUR_AZURE_DEVOPS_PAT\"}"
+           "X-azure-devops-electrolux-T1-token": "YOUR_AZURE_DEVOPS_PAT"
          }
        }
      }
    }
    ```
-   **Fallback (single token):** You can instead set `"Authorization": "Bearer YOUR_PAT"` or `"X-PR-Comment-Token": "YOUR_PAT"` if you only need one provider/org/project. Use the same host/port as in the run command. Restart Cursor after changing config.
+   **Alternative (multiple keys):** `"X-PR-Comment-Tokens": "{\"azure_devops_electrolux_T1_token\": \"YOUR_PAT\"}"`. **Fallback (single token):** `"Authorization": "Bearer YOUR_PAT"` or `"X-PR-Comment-Token": "YOUR_PAT"`.
 
 **Option B — stdio with uv:**
 
@@ -135,7 +136,7 @@ Adjust `cwd` and paths to your machine.
 
 ### post_pr_comments
 
-Post comment threads to a pull request. Token is resolved by key `{provider}_{org}_{project}_token` from header `X-PR-Comment-Tokens` (JSON) or env `PR_COMMENT_<KEY_UPPERCASED>`; fallback: `Authorization: Bearer` / `X-PR-Comment-Token` / `PR_COMMENT_TOKEN`; or pass optional `token` parameter.
+Post comment threads to a pull request. Token is resolved by key `{provider}_{org}_{project}_token` from header **`X-{provider}-{org}-{project}-token`** (e.g. `X-azure-devops-electrolux-T1-token`) or `X-PR-Comment-Tokens` (JSON), or env `PR_COMMENT_<KEY_UPPERCASED>`; fallback: `Authorization: Bearer` / `X-PR-Comment-Token` / `PR_COMMENT_TOKEN`; or pass optional `token` parameter.
 
 - **provider**: `azure_devops` (required for now).
 - **org**: Organization name.
@@ -163,4 +164,4 @@ Example `comments_body`:
 
 ## Azure DevOps PAT
 
-Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Pass it using the keyed format: header `X-PR-Comment-Tokens: {"azure_devops_<org>_<project>_token": "<PAT>"}` or env `PR_COMMENT_AZURE_DEVOPS_<ORG>_<PROJECT>_TOKEN=<PAT>`. Fallback: `Authorization: Bearer <PAT>`, `X-PR-Comment-Token`, or `PR_COMMENT_TOKEN`. The server does not store tokens.
+Create a [Personal Access Token](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens) with scope **Code (Read & Write)** or **Pull Request Threads (Read & Write)**. Pass it via header **`X-azure-devops-<org>-<project>-token`** or `X-PR-Comment-Tokens` (JSON), or env `PR_COMMENT_AZURE_DEVOPS_<ORG>_<PROJECT>_TOKEN=<PAT>`. Fallback: `Authorization: Bearer <PAT>`, `X-PR-Comment-Token`, or `PR_COMMENT_TOKEN`. The server does not store tokens.

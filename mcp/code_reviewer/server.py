@@ -5,7 +5,10 @@ Tools:
 - post_pr_comments: Post a JSON array of comment threads to a PR (pr-comment-format.md).
 - approve_pr: Approve a pull request (set reviewer vote). Azure DevOps: vote 10 = approved; GitHub placeholder.
 
-Token is keyed by provider/org/project: key format {provider}_{org}_{project}_token. Pass tokens via X-PR-Comment-Tokens JSON header (SSE/HTTP), or env PR_COMMENT_<KEY_UPPERCASED> (stdio), or optional token parameter. Fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN. No X-User-Id required.
+Token is keyed by provider/org/project. Key format: {provider}_{org}_{project}_token.
+Pass tokens via header X-{provider}-{org}-{project}-token (e.g. X-azure-devops-myorg-myproject-token),
+or X-PR-Comment-Tokens JSON, or env PR_COMMENT_<KEY_UPPERCASED>, or optional token parameter.
+Fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN. No X-User-Id required.
 """
 import argparse
 import asyncio
@@ -38,17 +41,45 @@ _fallback_token_from_header: ContextVar[str | None] = ContextVar(
 TOKEN_ENV_PREFIX = "PR_COMMENT_"
 
 
+def _token_header_name(provider: str, org: str, project: str) -> str:
+    """Header name for keyed token: X-{provider}-{org}-{project}-token (dashes in header)."""
+    parts = [
+        provider.replace("_", "-"),
+        (org or "").replace("_", "-"),
+        (project or "").replace("_", "-"),
+    ]
+    parts = [p for p in parts if p]
+    return "X-" + "-".join(parts) + "-token"
+
+
+def _header_name_to_key(header_name: str) -> str | None:
+    """Convert header name X-{p}-{o}-{proj}-token to key {provider}_{org}_{project}_token."""
+    n = header_name.lower().strip()
+    if not n.startswith("x-") or not n.endswith("-token"):
+        return None
+    inner = n[2:-6]  # drop "x-" and "-token"
+    if not inner:
+        return None
+    return inner.replace("-", "_") + "_token"
+
+
 def _token_key(provider: str, org: str, project: str) -> str:
-    """Key format: {provider}_{org}_{project}_token. Project may be empty."""
-    return f"{provider}_{org}_{project}_token"
+    """Key format: {provider}_{org}_{project}_token. Normalized to underscores for header lookup."""
+    parts = [
+        (provider or "").replace("-", "_"),
+        (org or "").replace("-", "_"),
+        (project or "").replace("-", "_"),
+    ]
+    return "_".join(p for p in parts if p) + "_token"
 
 
 def _no_token_msg(provider: str, org: str, project: str) -> str:
     key = _token_key(provider, org, project)
+    header_name = _token_header_name(provider, org, project)
     env_name = TOKEN_ENV_PREFIX + key.upper()
     return (
         f"No token provided for {provider}/{org}/{project}. "
-        f"Set X-PR-Comment-Tokens header with key \"{key}\", or env {env_name}, "
+        f"Set header {header_name}, or env {env_name}, "
         f"or fallback Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN, or pass the token parameter."
     )
 
@@ -58,7 +89,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
-    instructions="Post PR review comments (post_pr_comments) or approve PRs (approve_pr) for Azure DevOps and GitHub (placeholder). Token key format: {provider}_{org}_{project}_token. Pass via X-PR-Comment-Tokens JSON header or env PR_COMMENT_<KEY_UPPERCASED>; fallback: Authorization: Bearer / PR_COMMENT_TOKEN.",
+    instructions="Post PR review comments (post_pr_comments) or approve PRs (approve_pr) for Azure DevOps and GitHub (placeholder). Token key: {provider}_{org}_{project}_token. Pass via header X-{provider}-{org}-{project}-token (e.g. X-azure-devops-myorg-myproject-token) or env PR_COMMENT_<KEY_UPPERCASED>; fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN.",
 )
 
 
@@ -70,12 +101,14 @@ def _effective_token(provider: str, org: str, project: str, token_param: str | N
     if token_param and str(token_param).strip():
         return str(token_param).strip(), ""
     key = _token_key(provider, org, project)
-    # Keyed lookup from header
+    # Keyed lookup from header (keys from headers are lowercased)
     tokens_dict = _tokens_from_header.get()
-    if isinstance(tokens_dict, dict) and key in tokens_dict:
-        val = tokens_dict[key]
-        if val and str(val).strip():
-            return str(val).strip(), ""
+    if isinstance(tokens_dict, dict):
+        lookup_key = key.lower()
+        if lookup_key in tokens_dict:
+            val = tokens_dict[lookup_key]
+            if val and str(val).strip():
+                return str(val).strip(), ""
     # Keyed env
     env_name = TOKEN_ENV_PREFIX + key.upper()
     env_val = os.environ.get(env_name)
@@ -93,26 +126,34 @@ def _effective_token(provider: str, org: str, project: str, token_param: str | N
 
 
 class TokenFromHeaderMiddleware(BaseHTTPMiddleware):
-    """Set request-scoped tokens from X-PR-Comment-Tokens (JSON) or fallback Authorization: Bearer / X-PR-Comment-Token."""
+    """Set request-scoped tokens from X-{provider}-{org}-{project}-token headers or X-PR-Comment-Tokens (JSON), or fallback Authorization: Bearer / X-PR-Comment-Token."""
 
     async def dispatch(self, request, call_next):
         tokens_dict: dict[str, str] = {}
         fallback: str | None = None
+        # 1) Keyed headers: X-{provider}-{org}-{project}-token
+        for name, value in request.headers.items():
+            key = _header_name_to_key(name)
+            if key and value and str(value).strip():
+                tokens_dict[key] = str(value).strip()
+        # 2) Optional: X-PR-Comment-Tokens JSON (overrides/adds to keyed headers)
         raw_json = request.headers.get("X-PR-Comment-Tokens")
         if raw_json and raw_json.strip():
             try:
                 parsed = json.loads(raw_json)
                 if isinstance(parsed, dict):
-                    tokens_dict = {k: str(v) for k, v in parsed.items() if v is not None and str(v).strip()}
+                    for k, v in parsed.items():
+                        if v is not None and str(v).strip():
+                            tokens_dict[k] = str(v).strip()
             except (json.JSONDecodeError, TypeError):
                 pass
-        if not tokens_dict:
-            auth = request.headers.get("Authorization")
-            if auth and auth.startswith("Bearer "):
-                fallback = auth[7:].strip()
-            if not fallback:
-                raw = request.headers.get("X-PR-Comment-Token")
-                fallback = raw.strip() if raw and raw.strip() else None
+        # 3) Fallback single token (used when keyed lookup fails)
+        auth = request.headers.get("Authorization")
+        if auth and auth.startswith("Bearer "):
+            fallback = auth[7:].strip()
+        if not fallback:
+            raw = request.headers.get("X-PR-Comment-Token")
+            fallback = raw.strip() if raw and raw.strip() else None
         tok_ctx = _tokens_from_header.set(tokens_dict)
         fallback_ctx = _fallback_token_from_header.set(fallback)
         try:
@@ -124,7 +165,7 @@ class TokenFromHeaderMiddleware(BaseHTTPMiddleware):
 
 @mcp.tool(
     name="post_pr_comments",
-    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure; may be empty for GitHub), repository, pull_request_id, comments_body. Optional: token (else keyed X-PR-Comment-Tokens / env PR_COMMENT_<KEY> or fallback). Providers: azure_devops, github (placeholder). Token key format: {provider}_{org}_{project}_token.",
+    description="Post comment threads to a pull request. Body must be JSON array per pr-comment-format (one comment per thread). Required: provider, org, project (for Azure; may be empty for GitHub), repository, pull_request_id, comments_body. Optional: token (else keyed header X-{provider}-{org}-{project}-token or env PR_COMMENT_<KEY> or fallback). Providers: azure_devops, github (placeholder).",
 )
 def post_pr_comments(
     provider: str,      # The provider to use for posting comments (e.g., 'azure_devops'). Case-sensitive.
@@ -151,7 +192,7 @@ def post_pr_comments(
         str: Result message describing the actions taken (created threads, validation errors, or token errors).
 
     Token resolution:
-      - Uses key {provider}_{org}_{project}_token from X-PR-Comment-Tokens header or env PR_COMMENT_<KEY_UPPERCASED>
+      - Uses key {provider}_{org}_{project}_token from header X-{provider}-{org}-{project}-token or env PR_COMMENT_<KEY_UPPERCASED>
       - Fallback: Authorization: Bearer / X-PR-Comment-Token / PR_COMMENT_TOKEN
       - Or, use the explicit 'token' parameter to override
     """
@@ -193,7 +234,7 @@ def post_pr_comments(
 
 @mcp.tool(
     name="approve_pr",
-    description="Approve a pull request (set reviewer vote for the authenticated user). Required: provider, org, project (may be empty for GitHub), repository, pull_request_id. Optional: vote (10=approved, 5=approved with suggestions, 0=no vote, -5=waiting for author, -10=rejected; default 10), token. Providers: azure_devops, github (placeholder). Same token key format as post_pr_comments.",
+    description="Approve a pull request (set reviewer vote for the authenticated user). Required: provider, org, project (may be empty for GitHub), repository, pull_request_id. Optional: vote (10=approved, 5=approved with suggestions, 0=no vote, -5=waiting for author, -10=rejected; default 10), token. Providers: azure_devops, github (placeholder). Same token header X-{provider}-{org}-{project}-token as post_pr_comments.",
 )
 def approve_pr(
     provider: str,
